@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 from collections import defaultdict
+from dataclasses import dataclass
 from flask import current_app
 from sqlalchemy import or_, select
 from arcology_shared.hints import HintKey
@@ -695,11 +696,33 @@ class ArtefactMoveError(ValueError):
       - ``'target_forbidden'`` — caller may not move artefacts into the
         target item (includes the curator publish-prevention rule).
       - ``'same_item'``        — artefact is already in the target item.
+      - ``'empty_selection'``  — a batch request selected no artefacts.
+      - ``'invalid_selection'`` — a batch contains malformed, stale, derived,
+        pending-deletion, or foreign artefact UUIDs.
     """
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+@dataclass(frozen=True)
+class ArtefactBatchMoveResult:
+    """Counts returned after an atomic batch move."""
+
+    root_count: int
+    derived_count: int
+
+    @property
+    def total_count(self) -> int:
+        return self.root_count + self.derived_count
+
+
+# Upper bound on an explicit batch-move selection (the selected roots; each
+# root's derived subtree follows automatically and is not counted here).  Keeps
+# a single request from forcing an arbitrarily large explicit selection and a
+# correspondingly large ``IN (...)`` lookup over the roots.
+MAX_BATCH_MOVE_ARTEFACTS = 500
 
 
 def validate_artefact_move(artefact, target_item, user, *, sees_all: bool = False):
@@ -760,6 +783,106 @@ def move_artefact_to_item(artefact, new_item):
 
     _update_item_id(artefact, new_item.id)
     db.session.commit()
+
+
+def selected_root_artefacts(source_item, artefact_uuids, user=None, *,
+                            sees_all: bool = False, lock: bool = False):
+    """Resolve an explicit selection and reject stale or foreign UUIDs.
+
+    The exact-match check is important for confirmation workflows: an
+    artefact moved or deleted between selection and submission must not turn a
+    requested all-or-nothing operation into a silent partial move.
+    """
+    if not isinstance(artefact_uuids, (list, tuple)):
+        raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
+    if len(artefact_uuids) > MAX_BATCH_MOVE_ARTEFACTS:
+        raise ArtefactMoveError(
+            'invalid_selection',
+            f'Select at most {MAX_BATCH_MOVE_ARTEFACTS} artefacts in one batch',
+        )
+    # Validate the raw elements before deduplicating: ``dict.fromkeys`` needs
+    # hashable keys, so a JSON object/array element would otherwise raise an
+    # unhandled TypeError instead of the intended invalid-selection error.
+    if any(not isinstance(value, str) or len(value) != 32 for value in artefact_uuids):
+        raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
+    uuids = list(dict.fromkeys(artefact_uuids))
+    if not uuids:
+        raise ArtefactMoveError('empty_selection', 'Select at least one artefact')
+
+    stmt = (
+        select(Artefact)
+        .join(Item, Artefact.item_id == Item.id)
+        .where(
+            Artefact.uuid.in_(uuids),
+            Artefact.item_id == source_item.id,
+            Artefact.parent_artefact_id.is_(None),
+            Artefact.pending_deletion.is_(False),
+            artefact_visibility_clause(user, sees_all=sees_all),
+        )
+        .order_by(Artefact.label, Artefact.id)
+    )
+    if lock:
+        # Serialize competing moves of the same roots.  PostgreSQL rechecks the
+        # source-item predicate after a lock wait, so a concurrent winner turns
+        # the loser into an invalid-selection response rather than a second
+        # apparent success that silently moves the rows again.
+        stmt = stmt.with_for_update(of=Artefact)
+    artefacts = list(db.session.scalars(stmt))
+    if len(artefacts) != len(uuids):
+        raise ArtefactMoveError(
+            'invalid_selection',
+            'Some selected artefacts are no longer in this item — '
+            'reload it and select again',
+        )
+    return artefacts
+
+
+def move_artefacts_to_item(source_item, target_item, artefact_uuids, user,
+                           *, sees_all: bool = False):
+    """Atomically move selected roots and their derived trees to one item.
+
+    The selection and every descendant are fetched in a bounded number of
+    queries.  Slugs are allocated from one snapshot of the target namespace
+    through the shared ``ensure_unique_slug`` algorithm, avoiding the
+    per-artefact existence queries used by the interactive single-move path.
+    """
+    roots = selected_root_artefacts(
+        source_item, artefact_uuids, user, sees_all=sees_all, lock=True,
+    )
+    validate_artefact_move(roots[0], target_item, user, sees_all=sees_all)
+
+    root_ids = [artefact.id for artefact in roots]
+    base = select(Artefact.id).where(Artefact.parent_artefact_id.in_(root_ids))
+    descendants = base.cte(name='batch_move_descendants', recursive=True)
+    descendants = descendants.union_all(
+        select(Artefact.id).where(Artefact.parent_artefact_id == descendants.c.id)
+    )
+    descendant_ids = list(db.session.scalars(select(descendants.c.id)))
+    moved = list(db.session.scalars(
+        select(Artefact)
+        .where(Artefact.id.in_(root_ids + descendant_ids))
+        .order_by(Artefact.id)
+    ))
+
+    occupied = set(db.session.scalars(
+        select(Artefact.slug).where(
+            Artefact.item_id == target_item.id,
+            Artefact.slug.is_not(None),
+        )
+    ))
+    for artefact in moved:
+        new_slug = ensure_unique_slug(
+            artefact.slug or 'untitled', Artefact, taken=occupied,
+        )
+        artefact.slug = new_slug
+        artefact.item_id = target_item.id
+        occupied.add(new_slug)
+
+    db.session.commit()
+    return ArtefactBatchMoveResult(
+        root_count=len(roots),
+        derived_count=len(descendant_ids),
+    )
 
 
 def _collect_item_artefact_ids(item_ids):

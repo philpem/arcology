@@ -230,10 +230,33 @@
                         </select>
                     </form>
                     {% if user_can_contribute %}
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-batch-move-toggle>
+                        <i class="bi bi-check2-square"></i> Select to move
+                    </button>
                     {{ priority_form(url_for('myapp_blueprints_analysis.set_item_priority', uuid=item.uuid), none, reprioritise_choices, bulk=True) }}
                     <a href="{{ url_for('myapp_blueprints_artefacts.upload', item_id=item.url_id) }}" class="btn btn-sm btn-primary"><i class="bi bi-plus"></i> Upload</a>{% endif %}
                 </div>
             </div>
+            {% if user_can_contribute %}
+            <div class="card-body border-bottom py-2 d-none" data-batch-move-toolbar
+                 data-item-uuid="{{ item.uuid }}"
+                 data-clear-source="{{ request.args.get('batch_moved_from', '') }}">
+                <form method="post" action="{{ url_for('myapp_blueprints_items.batch_move_confirm', uuid=item.url_id) }}"
+                      class="d-flex align-items-center gap-3 flex-wrap" data-batch-move-form>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="artefact_uuids" value="[]" data-batch-move-values>
+                    <label class="form-check mb-0">
+                        <input type="checkbox" class="form-check-input" data-batch-move-page>
+                        <span class="form-check-label">Select this page</span>
+                    </label>
+                    <strong><span data-batch-move-count>0</span> selected across pages</strong>
+                    <button type="submit" class="btn btn-sm btn-primary" disabled data-batch-move-submit>
+                        Review and move…
+                    </button>
+                    <button type="button" class="btn btn-sm btn-link" data-batch-move-clear>Clear selection</button>
+                </form>
+            </div>
+            {% endif %}
             {% if letter_pages %}
             <div class="card-body border-bottom py-2">
                 {{ render_letter_bar('myapp_blueprints_items.view', letter_pages, current_letter, {'uuid': item.url_id, 'per_page': request.args.get('per_page'), 'artefact_sort': artefact_sort, 'artefact_q': artefact_q}) }}
@@ -243,7 +266,14 @@
                 {% for artefact in artefacts_page.items %}
                 <div class="list-group-item">
                     <div class="d-flex justify-content-between">
-                        <div>
+                        <div class="d-flex gap-3">
+                            {% if user_can_contribute %}
+                            <div class="form-check d-none" data-batch-move-checkbox-wrap>
+                                <input class="form-check-input" type="checkbox" value="{{ artefact.uuid }}"
+                                       aria-label="Select {{ artefact.label }}" data-batch-move-checkbox>
+                            </div>
+                            {% endif %}
+                            <div>
                             <h5>
                                 <a href="{{ artefact_url(artefact) }}">{{ artefact.label }}</a>
                                 {{ analysis_lozenge(artefact_analysis_status.get(artefact.id)) }}
@@ -269,6 +299,7 @@
                             </div>
                             {% endif %}
                             {% endif %}
+                            </div>
                         </div>
                         <div class="text-end">
                             {% if artefact.file_size is not none %}<small class="text-muted"><span title="{{ artefact.file_size }} bytes">{{ artefact.file_size | format_filesize }}</span></small>{% endif %}
@@ -284,6 +315,11 @@
     </div>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{% if user_can_contribute %}<script src="{{ url_for('static', filename='js/batch-move.js') }}"></script>{% endif %}
 {% endblock %}
 
 {% block modals %}

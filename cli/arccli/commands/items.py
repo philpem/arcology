@@ -178,4 +178,32 @@ def cmd_artefact_move(client, args):
 	else:
 		print(f"Moved artefact '{result.get('label', args.uuid)}' to item '{result.get('item_name', result.get('item_uuid', ''))}'")
 
+
+def cmd_artefacts_batch_move(client, args):
+	"""Move multiple artefacts from one item in a single transaction."""
+	destination = args.target_item_uuid or f'new subitem "{args.new_subitem}"'
+	if not args.yes:
+		answer = input(
+			f'Move {len(args.uuids)} artefact(s) from {args.source_item_uuid} '
+			f'to {destination}? [y/N] '
+		)
+		if answer.lower() != 'y':
+			print('Cancelled.')
+			return
+
+	result = client.batch_move_artefacts(
+		args.source_item_uuid,
+		args.uuids,
+		target_item_uuid=args.target_item_uuid,
+		new_item_name=args.new_subitem,
+	)
+	if args.json:
+		print_json(result)
+	else:
+		print(
+			f"Moved {result['root_artefacts_moved']} artefact(s) and "
+			f"{result['derived_artefacts_moved']} derived artefact(s) to "
+			f"'{result['target_item_name']}' ({result['target_item_uuid']})."
+		)
+
 # vim: ts=4 sw=4 noet
