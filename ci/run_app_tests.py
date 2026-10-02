@@ -46,6 +46,7 @@ import sys
 import unittest
 import warnings
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from sqlalchemy.exc import SAWarning
 
 _CI_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -108,7 +109,20 @@ def _quiet_library_logging():
     logging.disable(logging.INFO)
 
 
-def _run_module(module_name):
+def _make_runner(stream, junit_dir=None, verbosity=2):
+    """Return a unittest runner, optionally emitting JUnit XML.
+
+    ``junit_dir`` enables the ``unittest-xml-reporting`` runner, matching the
+    JUnit reports Jenkins consumes; a plain ``TextTestRunner`` is used when it is
+    unset (the GitHub Actions configuration).
+    """
+    if junit_dir:
+        import xmlrunner
+        return xmlrunner.XMLTestRunner(output=junit_dir, stream=stream, verbosity=verbosity)
+    return unittest.TextTestRunner(stream=stream, verbosity=verbosity)
+
+
+def _run_module(module_name, junit_dir=None):
     """Run a single test module in this (worker) process.
 
     Returns a result dict that the parent aggregates.  Output is captured so
@@ -117,6 +131,12 @@ def _run_module(module_name):
     _install_warning_filters()
     _quiet_library_logging()
     stream = io.StringIO()
+    output = None
+    if junit_dir:
+        # One subdirectory per module: xmlrunner writes a file per test class,
+        # and distinct modules can share class names.
+        output = os.path.join(junit_dir, module_name.replace('.', '_'))
+        os.makedirs(output, exist_ok=True)
     loader = unittest.TestLoader()
     try:
         suite = loader.loadTestsFromName(module_name)
@@ -130,7 +150,7 @@ def _run_module(module_name):
             'success': False,
             'output': f'ERROR: could not load {module_name}: {exc!r}\n',
         }
-    runner = unittest.TextTestRunner(stream=stream, verbosity=2)
+    runner = _make_runner(stream, output)
     result = runner.run(suite)
     return {
         'module': module_name,
@@ -143,13 +163,13 @@ def _run_module(module_name):
     }
 
 
-def _run_serial(module_names):
+def _run_serial(module_names, junit_dir=None):
     _quiet_library_logging()
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     for name in module_names:
         suite.addTests(loader.loadTestsFromName(name))
-    runner = unittest.TextTestRunner(verbosity=2)
+    runner = _make_runner(None, junit_dir)
     result = runner.run(suite)
     return 0 if result.wasSuccessful() else 1
 
@@ -162,6 +182,11 @@ def main():
         help='Number of worker processes (default: TEST_JOBS env or CPU count). '
              'Use 1 for single-process execution.',
     )
+    parser.add_argument(
+        '--junit-xml', metavar='DIR', default=None,
+        help='Write JUnit XML results under DIR (one subdirectory per module). '
+             'Used by Jenkins; GitHub Actions runs without it.',
+    )
     args = parser.parse_args()
 
     module_names = _discover_module_names()
@@ -171,11 +196,12 @@ def main():
 
     jobs = max(1, min(args.jobs, len(module_names)))
     if jobs == 1:
-        return _run_serial(module_names)
+        return _run_serial(module_names, args.junit_xml)
 
     results = []
+    worker = partial(_run_module, junit_dir=args.junit_xml)
     with ProcessPoolExecutor(max_workers=jobs) as executor:
-        for result in executor.map(_run_module, module_names):
+        for result in executor.map(worker, module_names):
             results.append(result)
             # Stream each module's output as it completes so a hang is visible.
             sys.stdout.write(result['output'])
