@@ -157,7 +157,10 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = No
         taken: optional set of slugs already in use.  When supplied it is tested
                instead of querying the database, so a batch allocator can pass
                one namespace snapshot and add each returned slug back — same
-               collision algorithm, no query per artefact.
+               collision algorithm, no query per artefact.  It is mutually
+               exclusive with ``existing_id``/``scope_filter``: the caller is
+               responsible for scoping the snapshot, and those two are ignored
+               (passing them together raises ValueError).
 
     Returns:
         Unique slug (may have -2, -3, etc. appended)
@@ -170,6 +173,9 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = No
         >>> ensure_unique_slug('disc-1', Artefact, scope_filter={'item_id': 3})
         'disc-1'  # Unique within item 3
     """
+    if taken is not None and (existing_id is not None or scope_filter is not None):
+        raise ValueError('taken is mutually exclusive with existing_id/scope_filter')
+
     def _build_query(slug_value):
         q = model_class.query.filter(model_class.slug == slug_value)
         if existing_id:

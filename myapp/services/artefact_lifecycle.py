@@ -718,9 +718,10 @@ class ArtefactBatchMoveResult:
         return self.root_count + self.derived_count
 
 
-# Upper bound on an explicit batch-move selection.  Bounds the ``IN (...)``
-# query and the work done before the transactional move, so a single request
-# cannot exhaust a web worker or the database with an enormous UUID list.
+# Upper bound on an explicit batch-move selection (the selected roots; each
+# root's derived subtree follows automatically and is not counted here).  Keeps
+# a single request from forcing an arbitrarily large explicit selection and a
+# correspondingly large ``IN (...)`` lookup over the roots.
 MAX_BATCH_MOVE_ARTEFACTS = 500
 
 
@@ -799,11 +800,14 @@ def selected_root_artefacts(source_item, artefact_uuids, user=None, *,
             'invalid_selection',
             f'Select at most {MAX_BATCH_MOVE_ARTEFACTS} artefacts in one batch',
         )
+    # Validate the raw elements before deduplicating: ``dict.fromkeys`` needs
+    # hashable keys, so a JSON object/array element would otherwise raise an
+    # unhandled TypeError instead of the intended invalid-selection error.
+    if any(not isinstance(value, str) or len(value) != 32 for value in artefact_uuids):
+        raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
     uuids = list(dict.fromkeys(artefact_uuids))
     if not uuids:
         raise ArtefactMoveError('empty_selection', 'Select at least one artefact')
-    if any(not isinstance(value, str) or len(value) != 32 for value in uuids):
-        raise ArtefactMoveError('invalid_selection', 'Invalid artefact selection')
 
     stmt = (
         select(Artefact)
