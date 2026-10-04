@@ -129,6 +129,22 @@ class TestDocumentIndexing(_Base):
         docs = {d.file_path: d.content for d in SearchDocument.query.filter_by(artefact_id=a.id)}
         self.assertEqual(docs, {'a': 'v2', 'b': 'keep me'})
 
+    def test_nul_in_inline_text_is_replaced(self):
+        """PostgreSQL TEXT cannot store NUL; inline analysis text is sanitised."""
+        from myapp.database import SearchDocument
+        from myapp.services.search_index import handle_search_documents
+        it = self._item()
+        a = self._artefact(it)
+        an = _mk_analysis(self.db, a.id)
+        handle_search_documents(an, {'outputs': [
+            {'type': 'text', 'text': 'before\x00after'},
+        ]})
+        self.db.session.commit()
+        self.assertEqual(
+            SearchDocument.query.filter_by(artefact_id=a.id).one().content,
+            'before\ufffdafter',
+        )
+
     def test_truncated_flag_stored(self):
         from myapp.database import SearchDocument
         from myapp.services.search_index import handle_search_documents
@@ -201,6 +217,23 @@ class TestStorageFallbackIndexing(_Base):
         self.db.session.commit()
         self.assertEqual(
             SearchDocument.query.filter_by(artefact_id=a.id).one().content, 'INLINE COPY')
+
+    def test_nul_in_storage_fallback_is_replaced(self):
+        """Historical saved text with NUL is safe to rebuild into PostgreSQL."""
+        from myapp.database import SearchDocument
+        from myapp.services.search_index import handle_search_documents
+        it = self._item()
+        a = self._artefact(it)
+        an = _mk_analysis(self.db, a.id)
+        self._put_output('doc_0_text.txt', b'before\x00after')
+        handle_search_documents(an, {'outputs': [
+            {'type': 'text', 'filename': 'doc_0_text.txt'},
+        ]})
+        self.db.session.commit()
+        self.assertEqual(
+            SearchDocument.query.filter_by(artefact_id=a.id).one().content,
+            'before\ufffdafter',
+        )
 
     def test_storage_read_capped_and_flagged(self):
         from unittest.mock import patch
