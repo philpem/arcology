@@ -2446,7 +2446,10 @@ def chunked_upload_init():
 		'filename': filename,
 		'total_chunks': total_chunks,
 		'total_size': data.get('total_size'),
-		'item_uuid': item_uuid,
+		# The API accepts URL identifiers (short UUID + slug), but async
+		# finalise re-resolves by exact UUID in a fresh DB session.  Persist the
+		# canonical UUID so both synchronous and asynchronous paths agree.
+		'item_uuid': item.uuid,
 		'label': label,
 		'artefact_type': data.get('artefact_type', 'auto'),
 		'description': data.get('description'),

@@ -445,6 +445,32 @@ class TestChunkedFinalizeAPIEndpoints(unittest.TestCase):
         self.assertEqual(body['artefact']['original_filename'], 'async.img')
         self.assertEqual(body['artefact']['file_size'], 8)
 
+    def test_async_complete_accepts_item_url_identifier(self):
+        """Short-UUID+slug item identifiers survive async finalisation."""
+        from myapp.database import Item
+        from myapp.services import chunked_upload as _chunked
+
+        with self.app.app_context():
+            item_url_id = Item.query.filter_by(uuid=self.item_uuid).one().url_id
+
+        uuid_ = self._init(
+            total_chunks=1, label='AsyncUrlId', item_uuid=item_url_id)
+
+        # The init endpoint accepts URL identifiers, but session metadata must
+        # carry the canonical UUID because the pool thread re-resolves it with
+        # an exact UUID query.
+        with self.app.app_context():
+            meta = _chunked.read_meta(uuid_)
+            self.assertEqual(meta['item_uuid'], self.item_uuid)
+
+        self._chunk(uuid_, 0, b'data')
+        self.assertEqual(self._complete_async(uuid_).status_code, 202)
+
+        code, body = self._poll(uuid_)
+        self.assertEqual(code, 200)
+        self.assertEqual(body['state'], 'done', body)
+        self.assertEqual(body['artefact']['file_size'], 4)
+
     def test_chunk_rejected_after_finalise_started(self):
         uuid_ = self._init(total_chunks=2, label='LateChunk')
         self._chunk(uuid_, 0, b'AAAA')
