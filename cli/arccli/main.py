@@ -98,6 +98,8 @@ def main():
 	upload_parser.add_argument('--label', '-l', help='Artefact label (auto-generated from filename for multi-file)')
 	upload_parser.add_argument('--type', '-t', help='Override artefact type (e.g. RAW_SECTOR, SCP, HFE)')
 	upload_parser.add_argument('--no-analyse', action='store_true', help='Skip automatic analysis')
+	upload_parser.add_argument('--sidecar', action='append', default=[], metavar='FILE', dest='sidecars',
+	                           help='Companion file to bundle with a single disk image (repeatable)')
 	upload_parser.add_argument('--hint', action='append', metavar='KEY=VALUE', dest='hints',
 	                           help='Analysis hint as KEY=VALUE (repeatable). '
 	                                'Examples: --hint dfi_clock_mhz=100, '
