@@ -343,6 +343,21 @@ def _require_view_analysis(analysis):
     _require_view_artefact(analysis.artefact)
 
 
+def _analysis_to_dict_for_reader(analysis, **kwargs):
+    """Serialise an analysis without disclosing restricted derived content."""
+    result = analysis_to_dict(analysis, **kwargs)
+    user, sees_all = _api_viewer()
+    if (
+        analysis.artefact is not None
+        and not sees_all
+        and not can_download_despite_restrictions(
+            user, analysis.artefact.effective_restrictions, analysis.artefact
+        )
+    ):
+        result['details'] = None
+    return result
+
+
 def _require_view_partition(partition):
     """Abort with 404 if the API caller may not view a partition's artefact."""
     _require_view_artefact(partition.artefact)
@@ -1034,14 +1049,14 @@ def request_analysis(uuid):
 def get_artefact_analyses(uuid):
     artefact = _get_artefact_or_404(uuid)
     analyses = Analysis.query.filter_by(artefact_id=artefact.id).order_by(Analysis.id.desc()).all()
-    return jsonify({'analyses': [analysis_to_dict(a) for a in analyses]})
+    return jsonify({'analyses': [_analysis_to_dict_for_reader(a) for a in analyses]})
 
 
 @blueprint.route('/analysis/<string:uuid>', methods=['GET'])
 @require_auth('read_only')
 def get_analysis(uuid):
     analysis = _get_analysis_or_404(uuid=uuid)
-    return jsonify(analysis_to_dict(analysis))
+    return jsonify(_analysis_to_dict_for_reader(analysis))
 
 
 @blueprint.route('/artefacts/<string:uuid>/analysis/tree', methods=['GET'])
@@ -1054,7 +1069,9 @@ def get_artefact_analysis_tree(uuid):
     artefact = _get_artefact_or_404(uuid)
     user, sees_all = _api_viewer()
     visible = set(visible_derived_artefact_ids(artefact, user, sees_all=sees_all))
-    return jsonify({'artefact': analysis_tree_node(artefact, visible_ids=visible)})
+    return jsonify({'artefact': analysis_tree_node(
+        artefact, visible_ids=visible, analysis_serializer=_analysis_to_dict_for_reader
+    )})
 
 
 @blueprint.route('/artefacts/<string:uuid>/processing-tree', methods=['GET'])
@@ -1076,7 +1093,9 @@ def get_artefact_processing_tree(uuid):
     # is not viewable rather than leak the private root and its subtree.
     if root.id not in visible:
         abort(404)
-    return jsonify(processing_tree_to_dict(root, visible_ids=visible))
+    return jsonify(processing_tree_to_dict(
+        root, visible_ids=visible, analysis_serializer=_analysis_to_dict_for_reader
+    ))
 
 
 @blueprint.route('/artefacts/<string:uuid>/analysis/recursive', methods=['GET'])
@@ -1105,7 +1124,9 @@ def get_artefact_analyses_recursive(uuid):
     return jsonify({
         'artefact_uuid': artefact.uuid,
         'artefact_label': artefact.label,
-        'analyses': [analysis_to_dict(a, include_artefact=True) for a in analyses],
+        'analyses': [
+            _analysis_to_dict_for_reader(a, include_artefact=True) for a in analyses
+        ],
         'total': total,
         'failed': failed,
     })
@@ -1173,7 +1194,9 @@ def search_failed_analyses():
     analyses = query.offset(offset).limit(per_page).all()
 
     return jsonify({
-        'failures': [analysis_to_dict(a, include_artefact=True) for a in analyses],
+        'failures': [
+            _analysis_to_dict_for_reader(a, include_artefact=True) for a in analyses
+        ],
         'total': total,
         'page': page,
         'per_page': per_page,
@@ -2423,7 +2446,10 @@ def chunked_upload_init():
 		'filename': filename,
 		'total_chunks': total_chunks,
 		'total_size': data.get('total_size'),
-		'item_uuid': item_uuid,
+		# The API accepts URL identifiers (short UUID + slug), but async
+		# finalise re-resolves by exact UUID in a fresh DB session.  Persist the
+		# canonical UUID so both synchronous and asynchronous paths agree.
+		'item_uuid': item.uuid,
 		'label': label,
 		'artefact_type': data.get('artefact_type', 'auto'),
 		'description': data.get('description'),

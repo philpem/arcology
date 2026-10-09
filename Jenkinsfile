@@ -39,7 +39,7 @@ pipeline {
                         python ci/check_imports.py
 
                         echo "=== Running application tests ==="
-                        python -m xmlrunner discover -s ci -p "test_*.py" -o test-results/app
+                        python ci/run_app_tests.py --junit-xml test-results/app
                     '''
                 }
             }
@@ -111,6 +111,12 @@ pipeline {
             steps {
                 sh 'docker build -t arcology-web:test .'
                 sh 'docker build -t arcology-worker:test -f worker/Dockerfile .'
+                sh '''
+                    docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev \
+                        --mount type=bind,src="$PWD",dst=/work,readonly \
+                        --workdir /work --entrypoint python3 arcology-worker:test \
+                        ci/check_worker_sandbox_tools.py
+                '''
             }
         }
     }

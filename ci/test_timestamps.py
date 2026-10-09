@@ -28,7 +28,8 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 
-from worker.arcworker.tools.extraction import enumerate_extracted_files
+from myapp.utils.timeutils import naive_utc_from_timestamp  # noqa: E402
+from worker.arcworker.tools.extraction import enumerate_extracted_files  # noqa: E402
 
 
 class TestEnumerateExtractedFilesTimestamp(unittest.TestCase):
@@ -59,7 +60,7 @@ class TestEnumerateExtractedFilesTimestamp(unittest.TestCase):
         f = self._tmpdir / 'file.txt'
         f.write_bytes(b'test')
         stat_mtime = f.stat().st_mtime
-        expected = datetime.utcfromtimestamp(stat_mtime).replace(microsecond=0)
+        expected = naive_utc_from_timestamp(stat_mtime).replace(microsecond=0)
 
         files = enumerate_extracted_files(self._tmpdir)
         got = datetime.fromisoformat(files[0]['modified_time']).replace(microsecond=0)
@@ -123,7 +124,7 @@ class TestEnumerateExtractedFilesTimestamp(unittest.TestCase):
         regular = [f for f in files if not f.get('is_directory')]
         self.assertEqual(len(regular), 1)
         got = datetime.fromisoformat(regular[0]['modified_time']).replace(microsecond=0)
-        expected = datetime.utcfromtimestamp(stat_mtime).replace(microsecond=0)
+        expected = naive_utc_from_timestamp(stat_mtime).replace(microsecond=0)
         self.assertEqual(got, expected)
 
 

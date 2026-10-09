@@ -197,7 +197,7 @@ def dfi_to_scp_hxcfe(input_path: Path, output_path: Path, clock_mhz: int | None 
                 '-conv:SCP_FLUX_STREAM',
                 f'-foutput:{output_path}',
             ]
-            result, process_output = run_tool_with_output(cmd)
+            result, process_output = run_tool_with_output(cmd, write_dirs=(output_path.parent,))
             process_output['script'] = script
         finally:
             Path(script_path).unlink(missing_ok=True)
@@ -208,7 +208,7 @@ def dfi_to_scp_hxcfe(input_path: Path, output_path: Path, clock_mhz: int | None 
             '-conv:SCP_FLUX_STREAM',
             f'-foutput:{output_path}',
         ]
-        result, process_output = run_tool_with_output(cmd)
+        result, process_output = run_tool_with_output(cmd, write_dirs=(output_path.parent,))
 
     if result.returncode == 0 and output_path.exists():
         return tool_result(

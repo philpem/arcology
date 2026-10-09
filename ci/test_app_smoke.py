@@ -40,6 +40,8 @@ os.environ.setdefault('WORKER_API_KEY', 'ci-test-worker-key')
 
 _WORKER_KEY = os.environ['WORKER_API_KEY']
 
+from myapp.utils.timeutils import naive_utc_now  # noqa: E402
+
 
 class TestAppSmoke(unittest.TestCase):
     """Smoke tests that verify the Flask app starts and auth works."""
@@ -152,7 +154,7 @@ class TestApiKeyLastUsedAtTimezone(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         from myapp.app import create_app
         from myapp.database import ApiKey, ApiKeyPermission, User, UserPermission
         from myapp.extensions import db
@@ -182,7 +184,7 @@ class TestApiKeyLastUsedAtTimezone(unittest.TestCase):
             )
             # Simulate a key that was used before: set last_used_at to a
             # timezone-naive datetime (as SQLAlchemy DateTime returns from the DB).
-            key_obj.last_used_at = datetime.utcnow() - timedelta(seconds=120)
+            key_obj.last_used_at = naive_utc_now() - timedelta(seconds=120)
             db.session.add(key_obj)
             db.session.commit()
 

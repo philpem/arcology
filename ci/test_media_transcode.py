@@ -94,7 +94,7 @@ class TestTranscodeTools(unittest.TestCase):
             d = Path(d)
             out = d / 'o.mp4'
 
-            def _fake(cmd, timeout=None):
+            def _fake(cmd, timeout=None, *, write_dirs):
                 # The first call is the transcode; create the output file.
                 if str(out) in cmd:
                     out.write_bytes(b'data')
@@ -119,7 +119,7 @@ class TestTranscodeTools(unittest.TestCase):
             d = Path(d)
             out = d / 'o.m4a'
 
-            def _fake(cmd, timeout=None):
+            def _fake(cmd, timeout=None, *, write_dirs):
                 out.write_bytes(b'data')
                 return _FakeProc(0), {}
 

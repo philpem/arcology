@@ -145,12 +145,21 @@ S3_REGION = os.environ.get('S3_REGION', 'us-east-1')
 S3_PUBLIC_URL = os.environ.get('S3_PUBLIC_URL', '')
 S3_UPLOAD_CONCURRENCY = _int_env('S3_UPLOAD_CONCURRENCY', '8')
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 log = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+    """Apply the worker's root logging configuration.
+
+    Deliberately *not* run at import time: this module is imported by the
+    application test suite, and configuring the root logger (or its format) as
+    an import side effect leaked worker log output into unrelated tests.  The
+    worker entry point calls this once at startup instead.
+    """
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
 SENTRY_DSN = os.environ.get('SENTRY_WORKER_DSN') or os.environ.get('SENTRY_DSN', '')
 SENTRY_TRACES_SAMPLE_RATE = float(

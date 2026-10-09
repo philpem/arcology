@@ -18,12 +18,21 @@ from ..config import MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT, log
 from ..exceptions import JobCancelledException
 from ..utils.text import decode_riscos_latin1, fix_riscos_c1_filenames, normalize_extracted_filenames
 from .base import run_tool, run_tool_with_output, tool_result
+from .process import sandboxed_process
 
 
 def _validate_entry_path(name: str, fmt: str) -> None:
     """Raise ValueError if *name* is absolute or contains '..' components."""
-    parts = name.replace('\\', '/').split('/')
-    if os.path.isabs(name) or '..' in parts:
+    portable_name = name.replace('\\', '/')
+    parts = portable_name.split('/')
+    # os.path.isabs() only recognises paths for the worker's host OS.  Archive
+    # member names can use either separator and may contain a Windows drive
+    # prefix even though extraction happens on Linux.
+    if (
+        portable_name.startswith('/')
+        or re.match(r'^[A-Za-z]:', portable_name)
+        or '..' in parts
+    ):
         raise ValueError(f'Unsafe path in {fmt} archive: {name!r}')
 
 
@@ -92,9 +101,14 @@ def _check_7z_paths(input_path: Path) -> None:
     try:
         # run_tool (not bare subprocess.run) so the listing honours job
         # cancellation and shows up in the command debug log.
-        result = run_tool(['7z', 'l', '-slt', str(input_path)], timeout=60)
+        result = run_tool(['7z', 'l', '-slt', str(input_path)], timeout=60, write_dirs=())
     except subprocess.TimeoutExpired as e:
         raise ValueError('7z listing timed out — archive rejected') from e
+
+    if result.returncode != 0:
+        raise ValueError(
+            f'7z could not safely list archive (exit code {result.returncode})'
+        )
 
     past_header = False
     path = None
@@ -147,7 +161,7 @@ def _check_rar_paths(input_path: Path) -> None:
     try:
         # run_tool (not bare subprocess.run) so the listing honours job
         # cancellation and shows up in the command debug log.
-        result = run_tool(['unrar', 'lt', str(input_path)], timeout=60)
+        result = run_tool(['unrar', 'lt', str(input_path)], timeout=60, write_dirs=())
     except subprocess.TimeoutExpired as e:
         raise ValueError('unrar listing timed out — archive rejected') from e
 
@@ -283,7 +297,7 @@ def _run_extraction_command(
     assert_confined: bool = False,
 ) -> dict[str, Any]:
     """Run an extractor command and apply the common post-processing flow."""
-    result, output = run_tool_with_output(cmd, cwd=cwd)
+    result, output = run_tool_with_output(cmd, cwd=cwd, write_dirs=(output_dir,))
 
     if result.returncode != 0:
         return _archive_error(
@@ -326,7 +340,7 @@ def extract_riscosarc(input_path: Path, output_dir: Path) -> dict[str, Any]:
     # extraction pipeline calls normalize_extracted_filenames() before any
     # archive job is queued, so the .arc file on disk already has a UTF-8 name.
     cmd = ['riscosarc', '-x', '-F', str(input_path)]
-    result, output = run_tool_with_output(cmd, cwd=str(output_dir))
+    result, output = run_tool_with_output(cmd, cwd=str(output_dir), write_dirs=(output_dir,))
 
     if result.returncode != 0:
         return _archive_error(
@@ -600,7 +614,8 @@ def extract_zip_riscos(input_path: Path, output_dir: Path) -> dict[str, Any]:
         return _archive_error('unzip', str(e))
 
     result, output = run_tool_with_output(
-        ['unzip', '-F', '-O', 'iso-8859-1', '-q', str(input_path), '-d', str(output_dir)]
+        ['unzip', '-F', '-O', 'iso-8859-1', '-q', str(input_path), '-d', str(output_dir)],
+        write_dirs=(output_dir,),
     )
 
     if result.returncode != 0:
@@ -715,17 +730,24 @@ def extract_lha(input_path: Path, output_dir: Path) -> dict[str, Any]:
 
 
 def extract_arj(input_path: Path, output_dir: Path) -> dict[str, Any]:
-    """Extract an ARJ archive via ``arj``.
+    """Safely extract an ARJ archive via ``7z``.
 
-    arj unpacks into the working directory, so it is run with ``cwd`` set to the
-    output dir; ``x`` keeps stored paths and ``-y`` answers prompts yes.
+    Validate every member path and reject links before extraction.  Unlike the
+    native ``arj`` command, this uses the same machine-readable listing and
+    extraction implementation, avoiding reliance on a post-write confinement
+    check after a hostile member may already have escaped the output directory.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _check_7z_paths(input_path)
+    except ValueError as e:
+        return _archive_error('7z', str(e))
+
     return _run_extraction_command(
-        tool='arj',
-        cmd=['arj', 'x', '-y', str(Path(input_path).resolve())],
+        tool='7z',
+        cmd=['7z', 'x', '-y', f'-o{output_dir}', str(input_path)],
         output_dir=output_dir,
-        cwd=str(output_dir),
         summary='Extracted {file_count} files from ARJ archive',
         assert_confined=True,
     )
@@ -735,8 +757,10 @@ def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
     """Extract a Zoo archive via ``zoo``.
 
     zoo unpacks into the working directory, so it is run with ``cwd`` set to the
-    freshly-created (empty) output dir; ``x`` extracts with stored paths and,
-    since the dir starts empty, no overwrite prompts fire.
+    freshly-created (empty) output dir.  Unlike archive tools with a reliable
+    machine-readable listing, zoo cannot be preflighted safely.  Run it through
+    a Landlock launcher that permits filesystem mutations only below the output
+    directory.  The launcher fails closed if the kernel cannot enforce this.
 
     The ``zoo`` binary is not in the worker base image's package repos (Ubuntu
     dropped it), so it may be absent — a missing binary degrades to a clean
@@ -744,18 +768,14 @@ def extract_zoo(input_path: Path, output_dir: Path) -> dict[str, Any]:
     from-source build) to make Zoo extraction functional.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        return _run_extraction_command(
-            tool='zoo',
-            cmd=['zoo', 'x', str(Path(input_path).resolve())],
-            output_dir=output_dir,
-            cwd=str(output_dir),
-            summary='Extracted {file_count} files from Zoo archive',
-            assert_confined=True,
-        )
-    except FileNotFoundError:
-        return _archive_error(
-            'zoo', 'zoo extractor not installed in the worker image')
+    return _run_extraction_command(
+        tool='zoo',
+        cmd=['zoo', 'x', str(Path(input_path).resolve())],
+        output_dir=output_dir,
+        cwd=str(output_dir),
+        summary='Extracted {file_count} files from Zoo archive',
+        assert_confined=True,
+    )
 
 
 def extract_7z(input_path: Path, output_dir: Path) -> dict[str, Any]:
@@ -814,11 +834,11 @@ def decompress_single_file(input_path: Path, output_file: Path, compressor: str)
     # stream_to_file() uses select() so the timeout is enforced mid-read,
     # not only after the loop exits.
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        outcome, stderr_bytes = stream_to_file(
-            proc, output_file, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
-        )
-        proc.wait()
+        with sandboxed_process(cmd, write_dirs=()) as proc:
+            outcome, stderr_bytes = stream_to_file(
+                proc, output_file, MAX_DECOMPRESSED_BYTES, TOOL_TIMEOUT
+            )
+            proc.wait()
 
         if outcome == 'cancelled':
             output_file.unlink(missing_ok=True)

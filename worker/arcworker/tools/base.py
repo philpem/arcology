@@ -15,6 +15,7 @@ from typing import TypedDict
 from ..config import TOOL_TIMEOUT, log
 from ..exceptions import JobCancelledException
 from ..utils.text import sanitize_filename
+from .process import sandboxed_process
 
 # Upper bound on how many bytes any single helper will pull into RAM at once.
 # Disc images are gigabytes; the parsers that legitimately read a whole file
@@ -55,7 +56,8 @@ def is_cancelled() -> bool:
     return _cancel_event.is_set()
 
 
-def run_tool(cmd: list[str], timeout: int | None = None, cwd: str | None = None) -> subprocess.CompletedProcess:
+def run_tool(cmd: list[str], timeout: int | None = None, cwd: str | None = None,
+             *, write_dirs: tuple[Path, ...]) -> subprocess.CompletedProcess:
     """
     Run a tool command with logging.
 
@@ -63,6 +65,7 @@ def run_tool(cmd: list[str], timeout: int | None = None, cwd: str | None = None)
         cmd: Command and arguments to run
         timeout: Maximum execution time in seconds
         cwd: Working directory for the command (optional)
+        write_dirs: Explicit writable output directories; () for stdout-only tools.
 
     Returns:
         CompletedProcess with stdout, stderr, and returncode
@@ -79,20 +82,10 @@ def run_tool(cmd: list[str], timeout: int | None = None, cwd: str | None = None)
     if _cancel_event.is_set():
         raise JobCancelledException(f"Job cancelled before subprocess started: {' '.join(cmd)}")
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=cwd,
-    )
-    deadline = time.monotonic() + timeout
-    stdout = b''
-    stderr = b''
-    try:
+    with sandboxed_process(cmd, write_dirs=write_dirs, cwd=cwd) as proc:
+        deadline = time.monotonic() + timeout
         while True:
             if _cancel_event.is_set():
-                proc.kill()
-                proc.wait()
                 raise JobCancelledException(
                     f"Job cancelled while running: {' '.join(cmd)}"
                 )
@@ -103,16 +96,8 @@ def run_tool(cmd: list[str], timeout: int | None = None, cwd: str | None = None)
                 # This 1-second tick timeout is an implementation detail; only
                 # surface a TimeoutExpired once the real wall-clock deadline passes.
                 if time.monotonic() >= deadline:
-                    proc.kill()
-                    proc.wait()
                     raise subprocess.TimeoutExpired(cmd, timeout) from None
                 # Still within wall-clock limit — loop and re-check cancel.
-    except BaseException:
-        try:
-            proc.kill()
-        except OSError:
-            pass
-        raise
 
     result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
     if result.returncode != 0:
@@ -165,7 +150,8 @@ def get_process_output(result: subprocess.CompletedProcess, cmd: list[str],
     return output
 
 
-def run_tool_with_output(cmd: list[str], timeout: int | None = None, cwd: str | None = None) -> tuple[subprocess.CompletedProcess, dict]:
+def run_tool_with_output(cmd: list[str], timeout: int | None = None, cwd: str | None = None,
+                         *, write_dirs: tuple[Path, ...]) -> tuple[subprocess.CompletedProcess, dict]:
     """
     Run a tool command and return both the result and structured output info.
 
@@ -176,12 +162,13 @@ def run_tool_with_output(cmd: list[str], timeout: int | None = None, cwd: str | 
         cmd: Command and arguments to run
         timeout: Maximum execution time in seconds
         cwd: Working directory for the command (optional)
+        write_dirs: Explicit writable output directories; () for stdout-only tools.
 
     Returns:
         Tuple of (CompletedProcess, process_output_dict)
     """
     start_time = time.time()
-    result = run_tool(cmd, timeout, cwd=cwd)
+    result = run_tool(cmd, timeout, cwd=cwd, write_dirs=write_dirs)
     duration = time.time() - start_time
 
     output = get_process_output(result, cmd, duration)
@@ -281,7 +268,7 @@ def run_and_build_result(
         **extras: Additional keys included in both success and failure result
             dicts (e.g. ``output_type``, ``gw_format``, ``heads``).
     """
-    result, process_output = run_tool_with_output(cmd, timeout=timeout, cwd=cwd)
+    result, process_output = run_tool_with_output(cmd, timeout=timeout, cwd=cwd, write_dirs=(output_path.parent,))
 
     if result.returncode == 0 and output_path.exists():
         return tool_result(

@@ -62,18 +62,66 @@ _VECTOR_EXTS: dict[str, tuple[tuple[str, object], ...]] = {
 }
 
 
+_IFF_BITMAP_TYPES = frozenset({b'ILBM', b'PBM '})
+
+
+def _is_iff_bitmap(input_path: Path) -> bool:
+    """Return whether *input_path* is a structurally valid IFF bitmap.
+
+    ImageMagick's ILBM coder handles both interleaved ILBM images and the
+    packed-pixel ``PBM `` variant.  Checking the complete IFF chunk envelope
+    prevents an unrelated format (in particular SVG) from reaching
+    ImageMagick's content-based decoder selection.  BMHD and BODY are required
+    for both bitmap variants.
+    """
+    try:
+        file_size = input_path.stat().st_size
+        with input_path.open('rb') as stream:
+            header = stream.read(12)
+            if (len(header) != 12 or header[:4] != b'FORM'
+                    or header[8:] not in _IFF_BITMAP_TYPES):
+                return False
+
+            form_size = int.from_bytes(header[4:8], 'big')
+            form_end = form_size + 8
+            if form_size < 4 or file_size != form_end:
+                return False
+
+            chunks = set()
+            offset = 12
+            while offset < form_end:
+                chunk_header = stream.read(8)
+                if len(chunk_header) != 8:
+                    return False
+                chunk_id = chunk_header[:4]
+                chunk_size = int.from_bytes(chunk_header[4:], 'big')
+                padded_size = chunk_size + (chunk_size & 1)
+                offset += 8 + padded_size
+                if offset > form_end:
+                    return False
+                chunks.add(chunk_id)
+                stream.seek(padded_size, os.SEEK_CUR)
+            return offset == form_end and {b'BMHD', b'BODY'} <= chunks
+    except OSError:
+        return False
+
+
 def convert_ilbm(input_path: Path, output_dir: Path, analysis_uuid: str) -> dict:
-    """Convert an IFF/ILBM image (Amiga / DPaint) to PNG via ImageMagick.
+    """Convert an IFF ILBM/PBM image (Amiga / DPaint) via ImageMagick.
 
     Returns the same result shape as :func:`convert_image` (``success`` /
     ``output_path`` / ``tool`` / ``error``).  ``[0]`` selects the first frame so
     a multi-image IFF still yields a single output file.
     """
+    if not _is_iff_bitmap(input_path):
+        return tool_result(False, tool='imagemagick',
+                           error='Input is not a valid IFF ILBM/PBM image')
+
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f'{analysis_uuid}_ilbm.png'
     try:
         result, output = run_tool_with_output(
-            ['convert', f'{input_path}[0]', str(out_path)])
+            ['convert', f'ILBM:{input_path}[0]', str(out_path)], write_dirs=(output_dir,))
     except FileNotFoundError:
         return tool_result(False, tool='imagemagick',
                            error='ImageMagick (convert) not available')
@@ -136,7 +184,7 @@ def _convert_vector(input_path: Path, output_dir: Path,
         out_svg = output_dir / f'{analysis_uuid}_image.svg'
         cmd = build_cmd(input_path, out_svg)
         try:
-            proc, _ = run_tool_with_output(cmd, timeout=60)
+            proc, _ = run_tool_with_output(cmd, timeout=60, write_dirs=(output_dir,))
         except FileNotFoundError:
             errors.append(f'{tool_name} not found')
             continue

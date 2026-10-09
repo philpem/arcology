@@ -379,6 +379,18 @@ def _read_output_text(filename: str | None) -> tuple[str, bool]:
     return raw[:_INDEX_TEXT_CAP].decode('utf-8', errors='replace'), truncated
 
 
+def _sanitize_index_text(content: str) -> str:
+    """Return text that PostgreSQL can safely store in a TEXT column.
+
+    PostgreSQL text values cannot contain U+0000.  FORMAT_CONVERT results can
+    legitimately acquire NULs when a nominal text file contains binary data,
+    and historical saved outputs may contain them too.  Replace each NUL with
+    U+FFFD at the indexing boundary so one bad document cannot roll back all
+    search-document rows from the analysis.
+    """
+    return content.replace('\x00', '\ufffd')
+
+
 def handle_search_documents(analysis: Analysis, details: dict,
                             full_rebuild: bool = False) -> None:
     """Index converted text into ``search_documents`` from a FORMAT_CONVERT result.
@@ -441,7 +453,7 @@ def handle_search_documents(analysis: Analysis, details: dict,
         db.session.add(SearchDocument(
             artefact_id=art_id,
             file_path=source_file,
-            content=content,
+            content=_sanitize_index_text(content),
             truncated=truncated,
         ))
 

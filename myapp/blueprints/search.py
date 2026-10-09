@@ -8,7 +8,6 @@ routes + presentation layer; the query parser and all sub-search logic live in
 """
 
 from flask import Blueprint, abort, render_template, request
-from sqlalchemy import distinct
 from ..database import ArtefactMastering, ArtefactProtection, FilesystemType
 from ..extensions import db
 from ..permissions import public_readable
@@ -101,10 +100,10 @@ def index():
     known_mastering_types = []
     if results is None:
         known_protection_types = sorted(
-            v for (v,) in db.session.query(distinct(ArtefactProtection.protection_type)).all()
+            v for (v,) in db.session.query(ArtefactProtection.protection_type).distinct().all()
         )
         known_mastering_types = sorted(
-            v for (v,) in db.session.query(distinct(ArtefactMastering.mastering_type)).all()
+            v for (v,) in db.session.query(ArtefactMastering.mastering_type).distinct().all()
         )
 
     return render_template(
