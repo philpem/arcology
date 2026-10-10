@@ -252,7 +252,7 @@ class TestOrphanEnumSerialization(unittest.TestCase):
             # in the Python enums directly into the columns, bypassing the ORM.
             db.session.execute(
                 db.text('UPDATE analyses SET analysis_type = :v WHERE id = :i'),
-                {'v': 'NSFW_SCAN', 'i': analysis.id},
+                {'v': 'GONE_ANALYSIS_TYPE', 'i': analysis.id},
             )
             db.session.execute(
                 db.text('UPDATE artefacts SET artefact_type = :v WHERE id = :i'),

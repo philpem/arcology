@@ -49,7 +49,9 @@ from .images import (
     _RISCOS_VIEWABLE_SUFFIXES,
     _convert_file_to_outputs,
     _detect_viewable_type,
+    _load_nsfw_sessions,
     process_format_convert,
+    process_nsfw_scan,
 )
 from .media import process_media_transcode
 from .metadata import (
@@ -87,6 +89,8 @@ __all__ = [
     '_detect_viewable_type',
     '_RISCOS_VIEWABLE_SUFFIXES',
     '_EXT_VIEWABLE',
+    '_load_nsfw_sessions',
+    'process_nsfw_scan',
     # Metadata
     'process_checksum_compute',
     'process_metadata_extract',
