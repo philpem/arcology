@@ -559,6 +559,11 @@ components:
         is_known:
           type: boolean
           description: True if this file matched an entry in a known-file hash database.
+        restrictions:
+          type: array
+          description: Restriction types applied directly to this file, excluding restrictions on its containing artefact.
+          items:
+            type: string
         is_directory:
           type: boolean
         risc_os_filetype:

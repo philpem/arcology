@@ -130,6 +130,7 @@ def file_to_dict(f):
         'sha1': f.sha1,
         'sha256': f.sha256,
         'is_known': f.is_known,
+        'restrictions': [r.restriction_type.value for r in f.restrictions],
         'is_directory': f.is_directory,
         'risc_os_filetype': f.risc_os_filetype,
         'load_address': f.load_address,

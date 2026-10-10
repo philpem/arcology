@@ -20,6 +20,7 @@ from cli.arccli.commands.hashdb_generate import (  # noqa: E402
     collect_canonical_candidates,
     diagnose_no_mandatory,
     get_launched_set,
+    is_malware,
     local_uniqueness_failure,
     make_is_unique,
     merge_identical_products,
@@ -41,6 +42,7 @@ def _f(path, **kw):
         'sha256': kw.get('sha256'),
         'file_size': kw.get('file_size', 100),
         'is_known': kw.get('is_known', False),
+        'restrictions': kw.get('restrictions', []),
         'is_directory': kw.get('is_directory', False),
         'risc_os_filetype': kw.get('risc_os_filetype'),
         'uuid': kw.get('uuid'),
@@ -963,6 +965,116 @@ class TestParseArtefactLabel(unittest.TestCase):
         p = parse_artefact_label('BeebIt (FR) 0.53')
         self.assertEqual(p['clean_name'], 'BeebIt (FR) 0.53')
         self.assertIsNone(p['disc_number'])
+
+
+class TestMalwareFingerprints(unittest.TestCase):
+    def test_command_writes_safe_products_and_reports_drop_count(self):
+        import io
+        import json
+        import tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from cli.arccli.commands.hashdb_generate import cmd_hashdb_generate_riscos
+
+        item = {'uuid': 'item-1', 'name': 'Sample'}
+        bad = _f('!Foo/virus', restrictions=['malware'], is_known=True)
+        clean = _f('!Foo/image', md5='bb' * 16, risc_os_filetype='ff8')
+        gathered = {'item': item, 'item_name': 'Sample', 'artefact_results': [
+            {'disc_number': None, 'app_dirs': {'!Foo': [bad, clean]}}
+        ]}
+        with tempfile.TemporaryDirectory() as tmp:
+            for keep in (False, True):
+                args = SimpleNamespace(
+                    item=['item-1'], tag=[], verbose=False, jobs=2, dry_run=False,
+                    root_files=False, global_check=False, include_known=True,
+                    multi_disc='separate', explain=True, require_mandatory=False,
+                    keep_malware=keep, output=str(Path(tmp) / 'hashdb.json'),
+                    db_name='Sample', db_description=None, db_version='1',
+                    source_url=None, json=True,
+                )
+                stdout = io.StringIO()
+                with patch('cli.arccli.commands.hashdb_generate._select_items', return_value=[item]), \
+                     patch('cli.arccli.commands.hashdb_generate._gather_item', return_value=gathered), \
+                     patch('cli.arccli.commands.hashdb_generate.get_launched_set',
+                           return_value={'virus', 'image'}), redirect_stdout(stdout):
+                    cmd_hashdb_generate_riscos(None, args)
+                summary = json.loads(stdout.getvalue())
+                output = json.loads(Path(args.output).read_text())
+                files = output['products'][0]['files']
+                self.assertEqual(summary['malware_files_dropped'], int(not keep))
+                self.assertEqual(summary['mandatory_files'], 1)
+                self.assertEqual(summary['optional_files'], int(keep))
+                self.assertEqual({f['filename']: f['is_required'] for f in files},
+                                 {'image': True, 'virus': False} if keep else {'image': True})
+
+    def test_only_direct_malware_restrictions_match(self):
+        for flags, expected in ((None, False), ([], False), (['pii'], False),
+                                (['malware'], True), (['pii', 'malware'], True)):
+            with self.subTest(flags=flags):
+                self.assertEqual(is_malware({'restrictions': flags}), expected)
+        self.assertFalse(is_malware({}))
+
+    def test_launched_and_fallback_malware_cannot_be_mandatory(self):
+        bad = _f('!Foo/!RunImage', risc_os_filetype='ff8', restrictions=['malware'])
+        clean = _f('!Foo/readme', risc_os_filetype='fff')
+        for launched in ({'!runimage'}, set()):
+            with self.subTest(launched=launched):
+                classified = classify_app_files('!Foo', [bad, clean], launched, lambda f: True)
+                self.assertEqual([required for _, required in classified], [False, False])
+
+    def test_default_drop_counts_and_retains_clean_siblings(self):
+        from collections import Counter
+        bad = _f('!Foo/!RunImage', restrictions=['malware'])
+        clean = _f('!Foo/clean', restrictions=['copyright'])
+        stats = Counter()
+        files = build_product_files([(bad, True), (clean, True)], stats=stats)
+        self.assertEqual([f['filename'] for f in files], ['clean'])
+        self.assertTrue(files[0]['is_required'])
+        self.assertEqual(stats['malware_files_dropped'], 1)
+
+    def test_keep_malware_is_optional_even_with_required_input(self):
+        from collections import Counter
+        stats = Counter()
+        files = build_product_files([(_f('!Foo/virus', restrictions=['malware']), True)],
+                                    keep_malware=True, stats=stats)
+        self.assertEqual(len(files), 1)
+        self.assertFalse(files[0]['is_required'])
+        self.assertEqual(stats['malware_files_dropped'], 0)
+
+    def test_include_known_does_not_override_malware_and_diagnosis_wins(self):
+        bad = _f('!Foo/!RunImage', restrictions=['malware'], is_known=True,
+                 risc_os_filetype='ff8')
+        unique = make_is_unique(None, {bad['md5']: {('i', '!Foo')}}, False, include_known=True)
+        self.assertFalse(unique(bad))
+        self.assertEqual(local_uniqueness_failure(bad, {}, include_known=False), 'malware')
+        self.assertEqual(diagnose_no_mandatory('!Foo', [bad], {'!runimage'}, unique), 'malware')
+
+    def test_product_build_counts_exclusions_even_when_product_is_omitted(self):
+        from collections import Counter
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from cli.arccli.commands.hashdb_generate import _build_products
+
+        bad = _f('!Foo/!RunImage', restrictions=['malware'], risc_os_filetype='ff8')
+        gathered = {'item_name': 'Item', 'artefact_results': [
+            {'disc_number': None, 'app_dirs': {'!Foo': [bad]}}
+        ]}
+        for keep in (False, True):
+            for require in (False, True):
+                stats = Counter()
+                args = SimpleNamespace(multi_disc='separate', verbose=False, explain=True,
+                                       keep_malware=keep, require_mandatory=require)
+                with patch('cli.arccli.commands.hashdb_generate.get_launched_set',
+                           return_value={'!runimage'}):
+                    products, reasons = _build_products(None, gathered, args, lambda f: True,
+                                                       jobs=2, stats=stats)
+                self.assertEqual(stats['malware_files_dropped'], int(not keep))
+                self.assertEqual(reasons['malware'], 1)
+                self.assertEqual(len(products), int(keep and not require))
+                if products:
+                    self.assertFalse(products[0]['files'][0]['is_required'])
 
 
 if __name__ == '__main__':

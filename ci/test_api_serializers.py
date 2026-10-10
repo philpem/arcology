@@ -300,6 +300,115 @@ class TestOrphanEnumSerialization(unittest.TestCase):
         self.assertIsNone(d['artefact_type'])
 
 
+class TestFileRestrictionMetadata(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from myapp.app import create_app
+        from myapp.database import ApiKey, ApiKeyPermission, User, UserPermission
+
+        cls.app = create_app()
+        cls.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+        cls.client = cls.app.test_client()
+        with cls.app.app_context():
+            db.create_all()
+            user = User(username='metadata-reader', password_hash='unused',
+                        permission=UserPermission.READ_ONLY, can_use_api=True)
+            db.session.add(user)
+            db.session.flush()
+            key, raw = ApiKey.create(user_id=user.id, name='metadata-read',
+                                     permission=ApiKeyPermission.READ_ONLY)
+            db.session.add(key)
+            db.session.commit()
+            cls.auth = {'X-API-Key': raw}
+
+    def _make_partition(self, n):
+        from arcology_shared.enums import ArtefactType
+        from myapp.database import (
+            Artefact,
+            ArtefactRestriction,
+            ExtractedFile,
+            ExtractedFileRestriction,
+            FilesystemType,
+            Item,
+            Partition,
+            RestrictionType,
+        )
+        with self.app.app_context():
+            item = Item(name=f'metadata-{n}')
+            db.session.add(item)
+            db.session.flush()
+            art = Artefact(item_id=item.id, label='infected container',
+                           artefact_type=ArtefactType.ZIP, storage_path='sample.zip',
+                           original_filename='sample.zip')
+            db.session.add(art)
+            db.session.flush()
+            db.session.add(ArtefactRestriction(artefact_id=art.id,
+                                               restriction_type=RestrictionType.MALWARE))
+            part = Partition(artefact_id=art.id, filesystem=FilesystemType.UNKNOWN)
+            db.session.add(part)
+            db.session.flush()
+            for i in range(n):
+                f = ExtractedFile(partition_id=part.id, path=f'!Foo/file{i:03}',
+                                  filename=f'file{i:03}')
+                db.session.add(f)
+                db.session.flush()
+                if i != 0:
+                    db.session.add(ExtractedFileRestriction(
+                        extracted_file_id=f.id, restriction_type=RestrictionType.MALWARE))
+                    db.session.add(ExtractedFileRestriction(
+                        extracted_file_id=f.id, restriction_type=RestrictionType.PII))
+            db.session.commit()
+            return part.uuid
+
+    def test_listing_serializes_direct_restrictions_and_preserves_pagination(self):
+        uuid = self._make_partition(4)
+        r = self.client.get(f'/api/partitions/{uuid}/files?show_known=true&per_page=2',
+                            headers=self.auth)
+        self.assertEqual(r.status_code, 200, r.data)
+        data = r.get_json()
+        self.assertEqual((data['total'], data['pages'], len(data['files'])), (4, 2, 2))
+        self.assertEqual(data['files'][0]['restrictions'], [])  # No container-wide taint.
+        self.assertEqual(set(data['files'][1]['restrictions']), {'malware', 'pii'})
+        r = self.client.get(f'/api/partitions/{uuid}/files?show_known=true&per_page=2&page=2',
+                            headers=self.auth)
+        self.assertEqual(len(r.get_json()['files']), 2)
+
+    def test_file_serializer_exposes_restriction_values(self):
+        from myapp.database import ExtractedFile, Partition
+        from myapp.utils.api_serializers import file_to_dict
+
+        uuid = self._make_partition(2)
+        with self.app.app_context():
+            files = db.session.scalars(db.select(ExtractedFile).join(Partition)
+                                       .where(Partition.uuid == uuid)
+                                       .order_by(ExtractedFile.path)).all()
+            self.assertEqual(file_to_dict(files[0])['restrictions'], [])
+            self.assertEqual(set(file_to_dict(files[1])['restrictions']), {'malware', 'pii'})
+
+    def test_listing_query_count_does_not_grow_per_file(self):
+        from sqlalchemy import event
+
+        counts = []
+        for n in (2, 30):
+            uuid = self._make_partition(n)
+            statements = []
+            def record(conn, cursor, statement, parameters, context, executemany, recorded=statements):
+                if statement.lstrip().upper().startswith('SELECT'):
+                    recorded.append(statement)
+            with self.app.app_context():
+                engine = db.engine
+            event.listen(engine, 'before_cursor_execute', record)
+            try:
+                r = self.client.get(f'/api/partitions/{uuid}/files?show_known=true&per_page=100',
+                                    headers=self.auth)
+                self.assertEqual(r.status_code, 200, r.data)
+                self.assertEqual(len(r.get_json()['files']), n)
+            finally:
+                event.remove(engine, 'before_cursor_execute', record)
+            counts.append(len(statements))
+        self.assertEqual(counts[0], counts[1], counts)
+
+
 if __name__ == '__main__':
     unittest.main()
 
