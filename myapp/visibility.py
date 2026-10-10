@@ -285,7 +285,7 @@ def can_reveal_explicit(user) -> bool:
     return _is_authenticated(user) and user.can_bypass_restriction(RestrictionType.EXPLICIT)
 
 
-def content_gate_flags(user, artefact) -> tuple[bool, bool]:
+def content_gate_flags(user, artefact, source_file=None) -> tuple[bool, bool]:
     """Return ``(restricted, explicit)`` display flags for *artefact*'s outputs.
 
     Single source of truth for the two content gates the viewer applies to any
@@ -298,17 +298,22 @@ def content_gate_flags(user, artefact) -> tuple[bool, bool]:
       bypass it: render behind the blur / "click to reveal" consent overlay.
       Mutually exclusive with ``restricted`` (a hard block wins).
 
-    Gate per **owning** artefact, not just the viewed root — a *derived* output
-    can be explicit/restricted while its root is not.
+    Gate per **owning** artefact, not just the viewed root. When supplied,
+    source_file also contributes its own and enclosing-archive restrictions.
+    Per-artefact bypass grants permit the same consent overlay as global ones.
     """
     if artefact is None:
         return False, False
-    restricted = output_blocked_for(user, artefact)
+    restrictions = list(artefact.effective_restrictions)
+    if source_file:
+        from .services.restrictions import file_restrictions_by_path
+
+        restrictions.extend(file_restrictions_by_path(artefact, [source_file])[source_file])
+    restricted = not can_download_despite_restrictions(user, restrictions, artefact)
     explicit = (
         not restricted
-        and can_reveal_explicit(user)
         and any(r.restriction_type == RestrictionType.EXPLICIT
-                for r in artefact.effective_restrictions)
+                for r in restrictions)
     )
     return restricted, explicit
 

@@ -91,6 +91,7 @@ from ..services.hash_rescan import (
     queue_hashdb_link_job,
 )
 from ..services.restrictions import (
+    analysis_details_blocked_for,
     artefact_contained_file_restrictions,
     collect_all_file_restrictions,
     collect_ancestor_file_restrictions,
@@ -347,13 +348,7 @@ def _analysis_to_dict_for_reader(analysis, **kwargs):
     """Serialise an analysis without disclosing restricted derived content."""
     result = analysis_to_dict(analysis, **kwargs)
     user, sees_all = _api_viewer()
-    if (
-        analysis.artefact is not None
-        and not sees_all
-        and not can_download_despite_restrictions(
-            user, analysis.artefact.effective_restrictions, analysis.artefact
-        )
-    ):
+    if not sees_all and analysis_details_blocked_for(user, analysis):
         result['details'] = None
     return result
 

@@ -80,7 +80,6 @@ from ..services.artefact_types import (
 from ..services.dedup import has_dedup_content
 from ..services.downloads import (
     output_access_decision,
-    resolve_output_artefact,
     serve_artefact_file,
     serve_extracted_file,
     serve_output_file,
@@ -126,7 +125,6 @@ from ..visibility import (
     can_curate_item,
     can_download_despite_restrictions,
     can_manage_privacy,
-    can_reveal_explicit,
     can_view_artefact,
     can_view_item,
     content_gate_flags,
@@ -708,22 +706,18 @@ _COLUMN_CLASSES = {
 
 def _viewer_make_output_helpers():
     """Shared per-request closures: output restriction gate and text-content enrichment."""
-    # Download restrictions gate the original bytes; an analysis output renders
-    # the same content, so withhold any output whose source artefact carries a
-    # restriction the current user cannot bypass.  Outputs may come from the
-    # viewed artefact or any derived artefact (Mode 2), so resolve per output by
-    # the artefact UUID embedded in its path (see resolve_output_artefact).
-    _restriction_cache: dict[str, bool] = {}
+    # Use the same per-output decision as both download routes. Cache source
+    # restriction maps per artefact, not decisions per directory: siblings can
+    # carry different file-level restrictions.
+    _restriction_cache = {}
+    _decisions = {}
 
     def _output_blocked(filename) -> bool:
-        # Cache by the artefact directory component ({uuid}_{slug}) so many
-        # outputs from one source artefact resolve with a single query.
-        parts = (filename or '').split('/', 2)
-        cache_key = parts[1] if len(parts) >= 2 else filename
-        if cache_key not in _restriction_cache:
-            src = resolve_output_artefact(filename)
-            _restriction_cache[cache_key] = bool(src) and output_blocked_for(current_user, src)
-        return _restriction_cache[cache_key]
+        if filename not in _decisions:
+            _decisions[filename] = output_access_decision(
+                filename, current_user, restriction_cache=_restriction_cache,
+            ) != 'ok'
+        return _decisions[filename]
 
     def _enrich_outputs(outputs):
         """For text outputs, read file content for inline rendering.
@@ -1061,7 +1055,6 @@ def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_bl
     # group['explicit'] must be set before the thumbnail bundling pass so that
     # explicit groups are not pulled into the unified thumbnail grid.
     explicit_type = RestrictionType.EXPLICIT
-    user_can_bypass_explicit = can_reveal_explicit(current_user)
 
     artefact_is_explicit = any(
         r.restriction_type == explicit_type for r in artefact.restrictions
@@ -1092,14 +1085,13 @@ def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_bl
         group['explicit'] = (
             artefact_is_explicit or group.get('source_file') in explicit_file_paths
         )
-        # Generalise the per-group placeholder to all download restrictions: when
-        # a group's source artefact carries a restriction this user cannot bypass
-        # (only possible in Mode 2 for a derived artefact — the viewed artefact's
-        # own restriction short-circuits to viewer_status='restricted' above), its
-        # image/SVG outputs would 403.  Mark the group so the template renders a
-        # notice / locked placeholder instead of a broken thumbnail.
+        # Apply the full download policy to each output, including source-file
+        # restrictions. Legacy results can carry a separate SVG preview path;
+        # neither that alias nor the primary output may bypass the gate.
         group['restricted'] = any(
-            _output_blocked(o.get('filename', '')) for o in group['outputs']
+            _output_blocked(o.get(key))
+            for o in group['outputs'] for key in ('filename', 'svg_filename')
+            if o.get(key)
         )
         # Stamp stable_id now so bundle_items (original group dicts pulled into
         # the thumbnail bundle below) carry it for per-thumbnail explicit gates.
@@ -1108,7 +1100,6 @@ def _viewer_explicit_gate(artefact, output_groups, all_partition_ids, _output_bl
         group['stable_id'] = hashlib.md5(
             f"{artefact.uuid}:{key_source}".encode()
         ).hexdigest()[:12]
-    return user_can_bypass_explicit
 
 
 def _viewer_thumbnail_bundle(artefact, output_groups, file_filter):
@@ -1326,7 +1317,7 @@ def _viewer_replay_detail(file_filter, all_artefact_ids):
     # the movie's owning artefact so a derived/explicit movie is gated even when
     # the viewed root artefact is not.
     owning = db.session.get(Artefact, row.artefact_id)
-    restricted, explicit = content_gate_flags(current_user, owning)
+    restricted, explicit = content_gate_flags(current_user, owning, row.file_path)
     detail['restricted'] = restricted
     detail['explicit'] = explicit
     detail['stable_id'] = hashlib.md5(
@@ -1365,7 +1356,7 @@ def _viewer_replay_groups(all_artefact_ids, current_path):
         if current_path and not (row.file_path or '').startswith(current_path):
             continue
         restricted, explicit = content_gate_flags(
-            current_user, artefacts.get(row.artefact_id))
+            current_user, artefacts.get(row.artefact_id), row.file_path)
         groups.append({
             'label': row.file_path,
             'source_file': row.file_path,
@@ -1460,7 +1451,7 @@ def _viewer_media_groups(all_artefact_ids, current_path):
         if current_path and not (row.file_path or '').startswith(current_path):
             continue
         restricted, explicit = content_gate_flags(
-            current_user, artefacts.get(row.artefact_id))
+            current_user, artefacts.get(row.artefact_id), row.file_path)
         groups.append({
             'label': row.file_path,
             'source_file': row.file_path,
@@ -1510,7 +1501,7 @@ def _viewer_media_detail(file_filter, all_artefact_ids, artefact):
 
     src_url, original_url = _media_src_url(row, all_artefact_ids)
     owning = db.session.get(Artefact, row.artefact_id)
-    restricted, explicit = content_gate_flags(current_user, owning)
+    restricted, explicit = content_gate_flags(current_user, owning, row.file_path)
 
     # Source size + hashes for the foot of the metadata table.  Extraction media
     # reads them from the matching ExtractedFile; a direct media upload (no
@@ -1640,7 +1631,7 @@ def _render_viewer(artefact):
 
     viewer_columns, viewer_col_class, prefs_dirty = _viewer_preferences()
 
-    user_can_bypass_explicit = _viewer_explicit_gate(
+    _viewer_explicit_gate(
         artefact, output_groups, all_partition_ids, _output_blocked)
 
     output_groups, viewer_thumbnail_mode, is_aggregate_mode, thumb_dirty = \
@@ -1678,7 +1669,6 @@ def _render_viewer(artefact):
         replay_present=replay_present,
         media_detail=media_detail,
         media_present=media_present,
-        user_can_bypass_explicit=user_can_bypass_explicit,
         total_counts=total_counts,
         total_groups=total_groups,
         viewer_columns=viewer_columns,
