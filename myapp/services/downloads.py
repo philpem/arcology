@@ -11,6 +11,7 @@ Each helper returns a Flask response, or None when the underlying file does
 not exist; callers translate None into their own 404 shape.
 """
 
+import json
 import mimetypes
 import os
 from flask import current_app, redirect, send_file
@@ -22,14 +23,15 @@ from flask import current_app, redirect, send_file
 from arcology_shared import storage as _storage  # noqa: F401
 from arcology_shared.storage import LocalStorage
 from arcology_shared.transcode_paths import CONTENT_ADDRESSED_MEDIA_PREFIX
-from ..database import Artefact, MediaFile, ReplayMovie
+from ..database import Analysis, AnalysisType, Artefact, MediaFile, ReplayMovie
 from ..extensions import db
-from ..visibility import can_view_artefact, output_blocked_for
+from ..visibility import can_download_despite_restrictions, can_view_artefact, output_blocked_for
 from .artefact_storage import (
     get_artefact_path,
     get_artefact_storage_key,
     resolve_extracted_file_path,
 )
+from .restrictions import file_restrictions_by_path
 
 # Length of a UUID hex string as used in output paths.
 UUID_HEX_LEN = 32
@@ -196,7 +198,50 @@ def resolve_output_artefacts(filename):
     return [artefact] if artefact is not None else []
 
 
-def output_access_decision(filename, user, *, sees_all=False):
+def _output_file_restrictions(artefact):
+    """Map converted output paths to their source-file restrictions.
+
+    Include legacy SVG aliases and media posters/transcodes. Read stored
+    metadata, never output bytes; existing outputs need no rebuild.
+    """
+    sources = {}
+    details_rows = db.session.scalars(
+        db.select(Analysis.details).where(
+            Analysis.artefact_id == artefact.id,
+            Analysis.analysis_type == AnalysisType.FORMAT_CONVERT,
+        )
+    ).all()
+    for raw in details_rows:
+        try:
+            details = json.loads(raw or '{}')
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(details, dict):
+            continue
+        for out in details.get('outputs', []):
+            if not isinstance(out, dict) or not out.get('source_file'):
+                continue
+            for key in ('filename', 'svg_filename'):
+                if out.get(key):
+                    sources.setdefault(out[key], set()).add(out['source_file'])
+    for model in (ReplayMovie, MediaFile):
+        rows = db.session.execute(
+            db.select(model.file_path, model.mp4_output_path, model.poster_path)
+            .where(model.artefact_id == artefact.id, model.file_path.is_not(None))
+        ).all()
+        for source, movie, poster in rows:
+            for path in (movie, poster):
+                if path:
+                    sources.setdefault(path, set()).add(source)
+    restrictions = file_restrictions_by_path(
+        artefact, {p for paths in sources.values() for p in paths})
+    return {
+        output: [r for p in paths for r in restrictions[p]]
+        for output, paths in sources.items()
+    }
+
+
+def output_access_decision(filename, user, *, sees_all=False, restriction_cache=None):
     """Authorisation decision for serving the output at *filename*.
 
     Returns ``'not_found'`` (no entitled artefact is viewable — 404; a private
@@ -207,8 +252,10 @@ def output_access_decision(filename, user, *, sees_all=False):
     A content-addressed transcode output is shared by every artefact holding the
     identical source media, so the user may read those identical bytes if ANY
     one entitled artefact is viewable and not restricted for them — that artefact
-    is a legitimate, unrestricted route to the same content.  For a legacy
-    single-owner path this collapses to the previous per-artefact check.
+    is a legitimate, unrestricted route to the same content. Both the owning
+    artefact and the specific source file must allow access, including file
+    restrictions inherited from enclosing archives. The optional cache is
+    request-local and avoids rebuilding source maps for each viewer output.
     """
     # A traversing path would authorise against a different artefact than it
     # serves (see is_safe_output_path); treat it as nonexistent.
@@ -220,8 +267,16 @@ def output_access_decision(filename, user, *, sees_all=False):
     ]
     if not viewable:
         return 'not_found'
-    if any(not output_blocked_for(user, a) for a in viewable):
-        return 'ok'
+    cache = restriction_cache if restriction_cache is not None else {}
+    for artefact in viewable:
+        if output_blocked_for(user, artefact):
+            continue
+        if artefact.id not in cache:
+            cache[artefact.id] = _output_file_restrictions(artefact)
+        if can_download_despite_restrictions(
+            user, cache[artefact.id].get(filename, []), artefact,
+        ):
+            return 'ok'
     return 'restricted'
 
 

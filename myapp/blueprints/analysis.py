@@ -22,6 +22,7 @@ from ..database import (
 from ..extensions import db
 from ..permissions import require_permission
 from ..services.artefact_lifecycle import visible_derived_artefact_ids
+from ..services.restrictions import analysis_details_blocked_for
 from ..utils.pagination import VALID_PER_PAGE, resolve_per_page
 from ..utils.timeutils import naive_utc_now
 from ..visibility import artefact_visibility_clause, can_view_artefact, can_view_item
@@ -277,6 +278,8 @@ def view(uuid):
         lambda m: f'\\u00{m.group(1)}',
         analysis.details,
     ) if analysis.details else analysis.details
+    if analysis_details_blocked_for(current_user, analysis):
+        details = None
     return render_template('analysis/view.html', analysis=analysis, details=details,
                            reprioritise_choices=REPRIORITISE_CHOICES)
 

@@ -9,6 +9,7 @@ these collectors.
 Moved verbatim from myapp/blueprints/artefacts.py.
 """
 
+from sqlalchemy.orm import selectinload
 from ..database import (
     ArtefactRestriction,
     ExtractedFile,
@@ -45,6 +46,27 @@ def collect_all_file_restrictions(ef):
     return restrictions
 
 
+def file_restrictions_by_path(artefact, paths):
+    """Restrictions on source files and their enclosing archives, scoped to an artefact.
+
+    Paths alone are not unique: unrelated partitions/artefacts can contain the
+    same name. Combine matches within the owning artefact conservatively.
+    """
+    paths = {p for p in paths if p}
+    result = {p: [] for p in paths}
+    if not paths:
+        return result
+    files = db.session.scalars(
+        db.select(ExtractedFile).join(Partition)
+        .where(Partition.artefact_id == artefact.id, ExtractedFile.path.in_(paths))
+        .options(selectinload(ExtractedFile.restrictions))
+    ).all()
+    for ef in files:
+        result[ef.path].extend(ef.restrictions)
+        result[ef.path].extend(collect_ancestor_file_restrictions(ef))
+    return result
+
+
 def artefact_contained_file_restrictions(artefact):
     """All ExtractedFileRestriction objects on the artefact's own extracted files.
 
@@ -59,6 +81,22 @@ def artefact_contained_file_restrictions(artefact):
         .filter(Partition.artefact_id == artefact.id)
         .all()
     )
+
+
+def analysis_details_blocked_for(user, analysis):
+    """Withhold analysis payloads that can embed restricted source content.
+
+    Details include inline text and tool logs, not just output links. Gate the
+    whole payload conservatively when any contained file is restricted.
+    """
+    from ..visibility import can_download_despite_restrictions
+
+    artefact = analysis.artefact
+    if artefact is None:
+        return False
+    restrictions = list(artefact.effective_restrictions)
+    restrictions.extend(artefact_contained_file_restrictions(artefact))
+    return not can_download_despite_restrictions(user, restrictions, artefact)
 
 
 def grantable_bypass_rtypes(artefact, all_artefact_ids=None):

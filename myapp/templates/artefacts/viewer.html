@@ -132,8 +132,8 @@
 </div>
 {% endmacro %}
 
-{# Image / SVG / text outputs for one non-bundle group — rendered plain, hidden
-   in a d-none wrapper (explicit, no bypass), or blurred behind the explicit
+{# Image / SVG / text outputs for one non-bundle group — rendered plain,
+   withheld (explicit, no bypass), or blurred behind the explicit
    gate.  Single source so the body is not duplicated across those branches. #}
 {% macro group_output_body(group, viewer_col_class) %}
 {% set ns = namespace(image_outputs=[], svg_outputs=[], text_outputs=[]) %}
@@ -706,9 +706,6 @@
         {# Non-bypassable download restriction: show a locked placeholder — the
            output's bytes are gated, so the image would 403. #}
         {% call thumb_card(item.label) %}{{ locked_thumb() }}{% endcall %}
-        {% elif item.explicit and not user_can_bypass_explicit %}
-        {# No bypass: show a locked placeholder in place of the image. #}
-        {% call thumb_card(item.label) %}{{ locked_thumb(title='') }}{% endcall %}
         {% elif item.explicit %}
         {# Bypass permitted: blur thumbnail in-place with a per-card gate.  The
            link needs .viewer-thumb-link for the aspect box since it is not the
@@ -758,13 +755,6 @@
    converted outputs render the restricted content, so withhold them and show a
    notice rather than broken images / 403 raw links. #}
 {{ restricted_notice('This file', 'its converted output is') }}
-{% elif group.explicit and not user_can_bypass_explicit %}
-{# Explicit, no bypass: content is hidden behind a notice.  The body is still
-   emitted inside a d-none wrapper (unchanged behaviour). #}
-<div class="alert alert-danger mb-4">
-    <i class="bi bi-lock-fill"></i> Explicit content — access restricted.
-</div>
-<div class="d-none">{{ group_output_body(group, viewer_col_class) }}</div>
 {% elif group.explicit %}
 {# Bypass permitted: blur content behind a consent overlay. #}
 {% call explicit_gate(group.stable_id, gate_class='mb-4') %}{{ group_output_body(group, viewer_col_class) }}{% endcall %}

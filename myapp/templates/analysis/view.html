@@ -120,7 +120,7 @@
     </div>
     
     <div class="col-md-8">
-        {% if analysis.status.value in ('completed', 'failed') and analysis.details %}
+        {% if analysis.status.value in ('completed', 'failed') and details %}
         {% set details = details | fromjson %}
 
         {# Display output images (flux visualisations, etc.) #}
