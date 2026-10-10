@@ -2062,7 +2062,7 @@ def get_partition_files(uuid):
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 100, type=int)
 
-    query = ExtractedFile.query.filter_by(partition_id=partition.id)
+    query = ExtractedFile.query.options(joinedload(ExtractedFile.restrictions)).filter_by(partition_id=partition.id)
     if not show_known:
         query = query.filter(ExtractedFile.known_file_id.is_(None))
 

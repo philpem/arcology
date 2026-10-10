@@ -28,6 +28,20 @@ server entirely over HTTP.  Releases are produced by the `Release CLI`
 workflow when a `cli-v*` tag is pushed (the tag must match the version in
 `cli/pyproject.toml`).
 
+## Malware and generated RISC OS hash databases
+
+`arco hashdb generate-riscos` excludes files carrying a direct `malware`
+restriction from product fingerprints. Clean files in a malware-restricted
+artefact remain eligible. `--keep-malware` retains flagged files as optional
+entries; they can never be mandatory, even with `--include-known`.
+
+`--explain` reports malware when a flagged launch target leaves an application
+without a mandatory file. The summary reports `malware_files_dropped` in JSON
+mode, or a dropped-file tally in normal output. Counts are per generated
+application instance before duplicate-product merging (and include instances
+later omitted by `--require-mandatory`). With `--multi-disc both`, the separate
+and merged products each contribute to the count.
+
 ## Configuration
 
 `arco` resolves configuration in three layers; higher layers override lower ones:

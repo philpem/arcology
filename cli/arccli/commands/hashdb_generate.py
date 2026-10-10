@@ -9,6 +9,9 @@ find the program it launches, and emits HashDB-compatible JSON ready for
 
 Classification (Mandatory == is_required, Optional == not is_required):
 
+  * Malware-flagged files are excluded by default. --keep-malware retains them
+    as Optional only, regardless of launch targets, uniqueness or --include-known.
+
   * The file(s) launched by !Run — an Absolute/Module run via Run/RMRun/RMLoad,
     or a BASIC image via `BASIC -quit <file>` — are marked **Mandatory**,
     provided the file is *unique*: it appears in only one application across the
@@ -417,6 +420,11 @@ def get_launched_set(client: ArcologyClient, app_files: list[dict],
         return set()
 
 
+def is_malware(f: dict) -> bool:
+    """Only direct file-level malware flags exclude a product fingerprint."""
+    return 'malware' in (f.get('restrictions') or [])
+
+
 def classify_app_files(app_dir_name: str, app_files: list[dict],
                        launched_set: set[str], is_unique,
                        verbose: bool = False) -> list[tuple[dict, bool]]:
@@ -433,7 +441,7 @@ def classify_app_files(app_dir_name: str, app_files: list[dict],
         if f.get('is_directory'):
             continue
         leaf = f.get('filename', '').lower()
-        if leaf in ('!run', '!boot'):
+        if leaf in ('!run', '!boot') or is_malware(f):
             results.append((f, False))
             continue
 
@@ -452,7 +460,7 @@ def classify_app_files(app_dir_name: str, app_files: list[dict],
     if not any_mandatory:
         for i, (f, _req) in enumerate(results):
             leaf = f.get('filename', '').lower()
-            if leaf in ('!run', '!boot'):
+            if leaf in ('!run', '!boot') or is_malware(f):
                 continue
             if _filetype_mandatory(f) and is_unique(f):
                 results[i] = (f, True)
@@ -461,10 +469,19 @@ def classify_app_files(app_dir_name: str, app_files: list[dict],
 
 
 def build_product_files(classified: list[tuple[dict, bool]],
-                        verbose: bool = False) -> list[dict]:
+                        verbose: bool = False, *, keep_malware: bool = False,
+                        stats: Counter | None = None) -> list[dict]:
     """Convert classified files to HashDB KnownFile entries."""
     result = []
     for f, is_req in classified:
+        if is_malware(f):
+            if not keep_malware:
+                if stats is not None:
+                    stats['malware_files_dropped'] += 1
+                if verbose:
+                    log.info('    excluded malware %s', f.get('path', ''))
+                continue
+            is_req = False  # Even caller-supplied classifications cannot require malware.
         entry = {
             'filename': f.get('filename', ''),
             'file_size': f.get('file_size'),
@@ -519,6 +536,7 @@ NO_MANDATORY_REASONS = (
     ('no-launch-target',
      'no launch target found (!Run not parsed in a recognised form and no '
      'RISC OS executable filetype metadata on any file)'),
+    ('malware', 'launch target is flagged as malware (excluded from mandatory matching)'),
     ('known',
      'launch target already present in an active hash database (is_known)'),
     ('shared',
@@ -551,6 +569,8 @@ def local_uniqueness_failure(f: dict, md5_appkeys: dict[str, set],
     not disqualified on that basis (used when regenerating a database whose own
     files are flagged is_known).
     """
+    if is_malware(f):
+        return 'malware'
     if f.get('is_known') and not include_known:
         return 'known'
     md5 = (f.get('md5') or '').lower()
@@ -1041,12 +1061,14 @@ def _gather_item(client: ArcologyClient, item: dict, filter_tags: list[str],
 
 
 def _build_products(client: ArcologyClient, g: dict, args, is_unique,
-                    jobs: int) -> tuple[list[dict], 'Counter']:
+                    jobs: int, stats: Counter | None = None) -> tuple[list[dict], 'Counter']:
     """Build HashDB product dicts for one gathered item.
 
     Returns ``(products, reasons)`` where *reasons* is a Counter of the
     NO_MANDATORY_REASONS codes for every application that produced no Mandatory
     file (whether emitted or dropped by --require-mandatory).
+    If supplied, *stats* collects dropped malware entries across all tasks,
+    including products subsequently omitted by --require-mandatory.
     """
     artefact_results = g['artefact_results']
     is_multi_disc = len(artefact_results) > 1
@@ -1112,9 +1134,18 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
         launched = get_launched_set(client, app_files, verbose=args.verbose)
         classified = classify_app_files(app_dir_name, app_files, launched,
                                         is_unique, verbose=args.verbose)
-        pfiles = build_product_files(classified, verbose=args.verbose)
+        file_stats = Counter()
+        pfiles = build_product_files(
+            classified, verbose=args.verbose,
+            keep_malware=getattr(args, 'keep_malware', False), stats=file_stats,
+        )
+        dropped = file_stats['malware_files_dropped']
         if not pfiles:
-            return (None, None)
+            reason = diagnose_no_mandatory(app_dir_name, app_files, launched, is_unique) if dropped else None
+            if explain and reason:
+                log.info('    %s: skipped (no eligible files: %s)',
+                         app_dir_name, _reason_label(reason))
+            return (None, reason, dropped)
         mandatory = sum(1 for f in pfiles if f['is_required'])
         product_title = build_product_title(app_dir_name, short_context, disc_number) + suffix
 
@@ -1131,7 +1162,7 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
                          product_title, _reason_label(reason))
             else:
                 log.info('    %s: skipped (no mandatory file)', product_title)
-            return (None, reason)
+            return (None, reason, dropped)
 
         if explain and mandatory == 0:
             log.info('    %s: %3d mandatory, %3d optional  [%s]',
@@ -1148,11 +1179,13 @@ def _build_products(client: ArcologyClient, g: dict, args, is_unique,
             # Private metadata for identical-copy merging; stripped before output.
             '_app_dir': app_dir_name,
             '_context': short_context,
-        }, reason)
+        }, reason, dropped)
 
     results = _run_jobs(make_product, tasks, jobs)
-    products = [p for p, _r in results if p]
-    reasons = Counter(r for _p, r in results if r)
+    products = [p for p, _r, _d in results if p]
+    reasons = Counter(r for _p, r, _d in results if r)
+    if stats is not None:
+        stats['malware_files_dropped'] += sum(d for _p, _r, d in results)
     return products, reasons
 
 
@@ -1295,8 +1328,9 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
     all_products = []
     items_with_products = 0
     no_mandatory_reasons: Counter = Counter()
+    generation_stats: Counter = Counter()
     for g in gathered:
-        products, reasons = _build_products(client, g, args, is_unique, jobs)
+        products, reasons = _build_products(client, g, args, is_unique, jobs, stats=generation_stats)
         no_mandatory_reasons.update(reasons)
         if products:
             all_products.extend(products)
@@ -1347,6 +1381,7 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
         log.info('Merged copies:    %d identical duplicate(s) collapsed', merged_count)
     log.info('Files:            %d (%d mandatory, %d optional)',
              total_files, mandatory_files, optional_files)
+    log.info('Malware files dropped: %d', generation_stats['malware_files_dropped'])
     if products_no_mandatory:
         log.info('No mandatory:     %d application(s) produced no mandatory file',
                  products_no_mandatory)
@@ -1371,6 +1406,7 @@ def cmd_hashdb_generate_riscos(client: ArcologyClient, args):
             'files': total_files,
             'mandatory_files': mandatory_files,
             'optional_files': optional_files,
+            'malware_files_dropped': generation_stats['malware_files_dropped'],
             'products_no_mandatory': products_no_mandatory,
             'no_mandatory_reasons': dict(no_mandatory_reasons),
             'merged_duplicates': merged_count,

@@ -285,6 +285,10 @@ def main():
 	                             'to be marked mandatory. Use when regenerating a database '
 	                             'whose own files are, by definition, already known — '
 	                             'otherwise every such application produces no mandatory file.')
+	hashdb_gen.add_argument('--keep-malware', action='store_true',
+	                        help='Keep malware-flagged files as optional entries. '
+	                             'By default they are excluded; they can never be mandatory.')
+
 	hashdb_gen.add_argument('--canonical-sources', dest='canonical_sources', metavar='FILE',
 	                        help='Disambiguate apps that appear on multiple artefacts '
 	                             '(!ArcFS, !System, !Fonts, !Scrap, !Boot, SerialDev, ...). '
