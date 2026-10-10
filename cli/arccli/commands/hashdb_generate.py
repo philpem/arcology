@@ -96,6 +96,9 @@ _TOSEC_VERSION_UNWRAP_RE = re.compile(r'\(v([^)]*)\)', re.IGNORECASE)
 # Collapse runs of spaces left behind after stripping.
 _MULTI_SPACE_RE = re.compile(r'  +')
 
+# Drop the article in ordinary and TOSEC titles, preserving a following version.
+_TITLE_ARTICLE_RE = re.compile(r'^the\s+|,\s+the(?=(?:\s+v?\d\S*)?\s*$)', re.IGNORECASE)
+
 # Known archive/disc-image extensions that may appear in artefact labels
 # when the label was derived from the original filename.
 _KNOWN_EXTS_RE = re.compile(
@@ -115,6 +118,7 @@ def strip_tosec_metadata(label: str) -> str:
     3. Unwrap ``(v...)`` to bare ``v...`` so ``Elite (v1.5)`` and
        ``Elite v1.5`` both produce the same title.
     4. Collapse any doubled spaces left by the stripping steps.
+    5. Drop a leading ``The`` or TOSEC ``, The`` suffix, keeping version text.
 
     Groups with no space before the opening bracket are preserved, e.g.
     ``Word(NG) 1.0`` stays intact.
@@ -123,7 +127,7 @@ def strip_tosec_metadata(label: str) -> str:
     result = _TOSEC_TAG_RE.sub(' ', result)
     result = _TOSEC_VERSION_UNWRAP_RE.sub(r'v\1', result)
     result = _MULTI_SPACE_RE.sub(' ', result)
-    return result.strip()
+    return _TITLE_ARTICLE_RE.sub('', result.strip()).strip()
 
 
 def parse_artefact_label(label: str) -> dict:

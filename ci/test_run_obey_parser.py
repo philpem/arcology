@@ -27,6 +27,7 @@ from cli.arccli.commands.hashdb_generate import (  # noqa: E402
     parse_canonical_sources,
     parse_run_obey,
     render_canonical_candidates,
+    strip_tosec_metadata,
 )
 
 
@@ -921,6 +922,34 @@ class TestProductContext(unittest.TestCase):
     def test_falls_back_to_item_name(self):
         self.assertEqual(_product_context('', 'Arcarc: Apps'), 'Arcarc: Apps')
         self.assertEqual(_product_context(None, 'Arcarc: Apps'), 'Arcarc: Apps')
+
+
+class TestTosecTitleCleanup(unittest.TestCase):
+    def test_drops_articles_and_preserves_versions(self):
+        for label, expected in (
+            ('BCF Cryptosystem, The', 'BCF Cryptosystem'),
+            ('BCF Cryptosystem, The (1994)(Publisher)', 'BCF Cryptosystem'),
+            ('The BCF Cryptosystem', 'BCF Cryptosystem'),
+            ('BCF Cryptosystem, The (v1.5)(1994)(Publisher)', 'BCF Cryptosystem v1.5'),
+            ('BCF Cryptosystem, The 1.5', 'BCF Cryptosystem 1.5'),
+            ('  BCF Cryptosystem, the  ', 'BCF Cryptosystem'),
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(strip_tosec_metadata(label), expected)
+
+    def test_preserves_articles_inside_names_and_similar_words(self):
+        for label in ('Theory', 'Theatre', 'Into The Unknown', 'Title, Theatre', 'The'):
+            with self.subTest(label=label):
+                self.assertEqual(strip_tosec_metadata(label), label)
+
+    def test_generated_title_keeps_disc_number_and_original_provenance(self):
+        label = 'BCF Cryptosystem, The (1994)(Publisher) (Disk 1 of 2)'
+        parsed = parse_artefact_label(label)
+        clean = strip_tosec_metadata(parsed['clean_name'])
+        self.assertEqual(build_product_title('!BCF', clean, parsed['disc_number']),
+                         '!BCF - BCF Cryptosystem (Disk 1)')
+        self.assertIn(', The', parsed['clean_name'])
+        self.assertIn('(1994)(Publisher)', parsed['clean_name'])
 
 
 class TestParseArtefactLabel(unittest.TestCase):
