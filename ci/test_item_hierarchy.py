@@ -216,6 +216,18 @@ class TestItemHierarchyAPI(unittest.TestCase):
         self.assertIsNone(data['parent_uuid'])
         self.assertEqual(data['path'], [])
 
+    def test_create_item_with_multiple_tags(self):
+        """Tag lookups may autoflush; the new item must already be in-session."""
+        import warnings
+        from sqlalchemy.exc import SAWarning
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', SAWarning)
+            resp = self._post('/api/items', {'name': 'test-tagged-item',
+                                            'tags': ['test-tag-one', 'test-tag-two']})
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(set(resp.get_json()['tags']), {'test-tag-one', 'test-tag-two'})
+
     def test_create_child_item(self):
         resp = self._post('/api/items', {'name': 'test-parent'})
         parent_uuid = json.loads(resp.data)['uuid']

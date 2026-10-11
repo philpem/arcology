@@ -759,6 +759,17 @@ def validate_artefact_move(artefact, target_item, user, *, sees_all: bool = Fals
         raise ArtefactMoveError('same_item', 'Artefact is already in that item')
 
 
+def _lock_move_destination(item):
+    """Serialize moves into an item's slug namespace until commit.
+
+    NO KEY UPDATE protects the namespace without blocking the foreign-key
+    KEY SHARE locks needed when another move updates an artefact's item_id.
+    """
+    db.session.execute(
+        select(Item.id).where(Item.id == item.id).with_for_update(key_share=True)
+    ).one()
+
+
 def move_artefact_to_item(artefact, new_item):
     """Move a root artefact (and all its derived artefacts) to a different item.
 
@@ -770,6 +781,8 @@ def move_artefact_to_item(artefact, new_item):
         raise ValueError('Only root artefacts can be moved')
     if artefact.item_id == new_item.id:
         raise ValueError('Artefact is already in this item')
+
+    _lock_move_destination(new_item)
 
     def _update_item_id(art, target_item_id):
         art.item_id = target_item_id
@@ -846,6 +859,7 @@ def move_artefacts_to_item(source_item, target_item, artefact_uuids, user,
     through the shared ``ensure_unique_slug`` algorithm, avoiding the
     per-artefact existence queries used by the interactive single-move path.
     """
+    _lock_move_destination(target_item)
     roots = selected_root_artefacts(
         source_item, artefact_uuids, user, sees_all=sees_all, lock=True,
     )

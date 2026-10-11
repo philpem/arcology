@@ -172,8 +172,8 @@ def create_item_record(*, name: str, parent=None, owner=None, description=None,
         category_id=category_id,
         parent_id=parent_id,
     )
-    assign_item_tags(item, tags)
     db.session.add(item)
+    assign_item_tags(item, tags)
     db.session.flush()
     recompute_item_privacy(item)
     item.slug = ensure_unique_slug(generate_slug(item.name), Item)
