@@ -6,6 +6,10 @@ for a straightforward coding session.
 
 Tick off items and move them to a PR description once a design is agreed.
 
+Fuller written-up plans (past the stub stage) live in [`doc/plans/`](plans/) —
+e.g. [`DOCUMENT_FULLTEXT_PLAN.md`](plans/DOCUMENT_FULLTEXT_PLAN.md) (full-text
+search and rendering of Word / Impression / Ovation / TechWriter documents).
+
 ---
 
 ## Open Items
