@@ -1,0 +1,17 @@
+{
+  "input": "promote.zip",
+  "original_filename": "promote.zip",
+  "artefact_type": "ZIP",
+  "seed_analyses": [
+    {
+      "type": "archive_extract"
+    }
+  ],
+  "run_types": [
+    "archive_extract"
+  ],
+  "required_tools": [
+    "unzip"
+  ],
+  "max_steps": 20
+}

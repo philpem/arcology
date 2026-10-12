@@ -1,0 +1,86 @@
+name: Worker Integration Tests
+
+# Runs the analysis-pipeline integration suite (real tools, fake API) inside the
+# worker image.  The image is expensive to build, so layers are cached in GHCR
+# via buildx.  This workflow is separate from ci.yml and does not gate it.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker-integration:
+    name: Worker pipeline integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The worker image is large (it compiles HxCFE, Fluxfox, DiscImageManager,
+      # …) and `load: true` keeps both the export tarball and the loaded image,
+      # so the default runner (~14 GB free) runs out of space.  Reclaim the
+      # preinstalled toolchains we don't use (~25 GB).  Done manually rather than
+      # via a third-party action to avoid a supply-chain dependency.
+      - name: Free disk space
+        run: |
+          echo "Before:"; df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+                      /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune --all --force || true
+          echo "After:"; df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Fork PRs have no GHCR write token, so they can read the build cache but
+      # not export to it.  This flag gates the login and the cache-to export.
+      - name: Determine cache push capability
+        id: cache
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ] || \
+             [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "can_push=true" >> "$GITHUB_OUTPUT"
+            echo "cache_to=type=registry,ref=ghcr.io/${{ github.repository }}/worker-buildcache,mode=max" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_push=false" >> "$GITHUB_OUTPUT"
+            echo "cache_to=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        if: ${{ steps.cache.outputs.can_push == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build worker image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          load: true
+          tags: arcology-worker:it
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/worker-buildcache
+          cache-to: ${{ steps.cache.outputs.cache_to }}
+
+      - name: Run integration suite
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -w /repo \
+            -e ARCOLOGY_IT_STRICT=1 \
+            -e WORKER_API_KEY=integration-test \
+            --entrypoint python3 \
+            arcology-worker:it \
+            ci/integration/run_integration.py -v
