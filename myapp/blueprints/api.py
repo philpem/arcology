@@ -65,6 +65,7 @@ from ..services.artefact_lifecycle import (
     mark_artefact_pending_deletion,
     mark_item_pending_deletion,
     move_artefact_to_item,
+    move_artefacts_to_item,
     queue_artefact_delete,
     queue_item_delete,
     reanalysis_reset_marker,
@@ -114,7 +115,7 @@ from ..utils.blobs import artefact_blob, artefact_blob_storage_path, assign_blob
 from ..utils.db_helpers import get_by_id_or_404 as _get_by_id_or_404
 from ..utils.db_helpers import get_by_uuid_or_404 as _get_by_uuid_or_404
 from ..utils.enum_display import enum_value
-from ..utils.item_helpers import assign_item_fields, assign_item_tags
+from ..utils.item_helpers import create_item_record
 from ..utils.privacy import recompute_item_privacy
 from ..utils.slugs import ensure_unique_slug, generate_slug
 from ..utils.slugs import lookup_by_identifier as _lookup_by_identifier
@@ -518,7 +519,7 @@ def create_item():
         return error_response('Name is required')
 
     api_user, sees_all = _api_viewer()
-    parent_id = None
+    parent = None
     if data.get('parent_uuid'):
         parent = Item.query.filter(Item.uuid == data['parent_uuid']).first()
         if parent is None:
@@ -527,25 +528,18 @@ def create_item():
             return error_response('Parent item not found', 404)
         if parent.private_effective and not can_contribute_to_item(parent, api_user, sees_all=sees_all):
             return error_response('Not permitted to create child items under this parent', 403)
-        parent_id = parent.id
 
-    item = Item()
-    assign_item_fields(
-        item,
+    item = create_item_record(
         name=data['name'],
+        parent=parent,
+        owner=api_user,
         description=data.get('description'),
         platform_id=data.get('platform_id'),
         category_id=data.get('category_id'),
-        parent_id=parent_id,
+        is_private=bool(data.get('is_private', False)),
+        tags=data.get('tags'),
+        commit=True,
     )
-    item.owner_id = api_user.id if api_user is not None else None
-    item.is_private = bool(data.get('is_private', False))
-    db.session.add(item)
-    db.session.flush()  # assigns item.id so tag back-references work correctly
-    assign_item_tags(item, data.get('tags'))
-    recompute_item_privacy(item)
-    item.slug = ensure_unique_slug(generate_slug(item.name), Item)
-    db.session.commit()
     return jsonify(item_to_dict(item)), 201
 
 
@@ -756,6 +750,67 @@ def move_artefact(uuid):
         return error_response(str(e), 400)
 
     return jsonify(artefact_to_dict(artefact))
+
+
+@blueprint.route('/items/<string:source_uuid>/artefacts/batch-move', methods=['POST'])
+@require_auth('read_write')
+def batch_move_artefacts(source_uuid):
+    """Move explicitly selected roots, optionally creating a source subitem."""
+    source_item = _get_item_or_404(source_uuid)
+    api_user, sees_all = _api_viewer()
+    data, error = _json_object(required=True)
+    if error:
+        return error
+
+    artefact_uuids = data.get('artefact_uuids')
+    if not isinstance(artefact_uuids, list):
+        return error_response('artefact_uuids must be an array', 400)
+    target_uuid = data.get('target_item_uuid')
+    new_item_name = data.get('new_item_name')
+    if new_item_name is not None and not isinstance(new_item_name, str):
+        return error_response('new_item_name must be a string', 400)
+    if target_uuid is not None and not isinstance(target_uuid, str):
+        return error_response('target_item_uuid must be a string', 400)
+    if new_item_name is not None:
+        new_item_name = new_item_name.strip()
+    if bool(target_uuid) == bool(new_item_name):
+        return error_response(
+            'Provide exactly one of target_item_uuid or new_item_name', 400,
+        )
+
+    if new_item_name:
+        if len(new_item_name) > 255:
+            return error_response('new_item_name must be 255 characters or fewer', 400)
+        if source_item.private_effective and not can_contribute_to_item(
+                source_item, api_user, sees_all=sees_all):
+            return error_response('Not permitted to create a child item here', 403)
+        target_item = create_item_record(
+            name=new_item_name, parent=source_item, owner=api_user,
+        )
+    else:
+        target_item = Item.query.filter_by(uuid=target_uuid).first()
+        if target_item is None or not can_view_item(
+                target_item, api_user, sees_all=sees_all):
+            return error_response('Target item not found', 404)
+
+    try:
+        result = move_artefacts_to_item(
+            source_item, target_item, artefact_uuids, api_user, sees_all=sees_all,
+        )
+    except ArtefactMoveError as e:
+        db.session.rollback()
+        status = 403 if e.code in ('source_forbidden', 'target_forbidden') else 400
+        return error_response(str(e), status)
+
+    return jsonify({
+        'source_item_uuid': source_item.uuid,
+        'target_item_uuid': target_item.uuid,
+        'target_item_name': target_item.name,
+        'root_artefacts_moved': result.root_count,
+        'derived_artefacts_moved': result.derived_count,
+        'total_artefacts_moved': result.total_count,
+        'created_target_item': bool(new_item_name),
+    })
 
 
 @blueprint.route('/artefacts/<string:uuid>', methods=['PATCH'])

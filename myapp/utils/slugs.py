@@ -143,7 +143,8 @@ def get_slug(obj) -> str | None:
 
 
 def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = None,
-                       scope_filter: dict | None = None) -> str:
+                       scope_filter: dict | None = None,
+                       taken: set | None = None) -> str:
     """
     Ensure slug is unique by appending number if necessary.
 
@@ -153,6 +154,13 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = No
         existing_id: ID to exclude from uniqueness check (for updates)
         scope_filter: Optional dict of extra filter kwargs to scope uniqueness
                       (e.g. {'item_id': 5} to check uniqueness within one item)
+        taken: optional set of slugs already in use.  When supplied it is tested
+               instead of querying the database, so a batch allocator can pass
+               one namespace snapshot and add each returned slug back — same
+               collision algorithm, no query per artefact.  It is mutually
+               exclusive with ``existing_id``/``scope_filter``: the caller is
+               responsible for scoping the snapshot, and those two are ignored
+               (passing them together raises ValueError).
 
     Returns:
         Unique slug (may have -2, -3, etc. appended)
@@ -165,6 +173,9 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = No
         >>> ensure_unique_slug('disc-1', Artefact, scope_filter={'item_id': 3})
         'disc-1'  # Unique within item 3
     """
+    if taken is not None and (existing_id is not None or scope_filter is not None):
+        raise ValueError('taken is mutually exclusive with existing_id/scope_filter')
+
     def _build_query(slug_value):
         q = model_class.query.filter(model_class.slug == slug_value)
         if existing_id:
@@ -173,19 +184,29 @@ def ensure_unique_slug(base_slug: str, model_class, existing_id: int | None = No
             q = q.filter_by(**scope_filter)
         return q
 
-    if _build_query(base_slug).first() is None:
+    def _is_taken(slug_value):
+        if taken is not None:
+            return slug_value in taken
+        return _build_query(slug_value).first() is not None
+
+    if not _is_taken(base_slug):
         return base_slug
 
     # Try numbered variants
     counter = 2
     while counter < 1000:  # Safety limit
         candidate = f"{base_slug}-{counter}"
-        if _build_query(candidate).first() is None:
+        if not _is_taken(candidate):
             return candidate
         counter += 1
 
-    # Fallback with timestamp if too many conflicts
-    return f"{base_slug}-{int(time.time())}"
+    # Fallback with a timestamp if too many conflicts.  Advance until free so a
+    # batch allocating from a shared ``taken`` set cannot repeat a timestamp.
+    seed = int(time.time())
+    offset = 0
+    while _is_taken(f"{base_slug}-{seed + offset}"):
+        offset += 1
+    return f"{base_slug}-{seed + offset}"
 
 
 def lookup_by_identifier(model_class, identifier: str):

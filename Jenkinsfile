@@ -100,6 +100,9 @@ pipeline {
 
                                 echo "=== Re-upgrading database (idempotency check) ==="
                                 flask db upgrade
+
+                                echo "=== PostgreSQL move concurrency regressions ==="
+                                python -c 'from ci.run_app_tests import _run_serial; raise SystemExit(_run_serial(["ci.test_move_concurrency"]))'
                             '''
                         }
                     }

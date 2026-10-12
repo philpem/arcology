@@ -486,6 +486,16 @@ class ArcologyClient:
 	def move_artefact(self, uuid: str, target_item_uuid: str) -> dict:
 		return self.post_json(f'artefacts/{uuid}/move', {'target_item_uuid': target_item_uuid})
 
+	def batch_move_artefacts(self, source_item_uuid: str, artefact_uuids: list[str],
+	                         *, target_item_uuid: str | None = None,
+	                         new_item_name: str | None = None) -> dict:
+		data = {'artefact_uuids': artefact_uuids}
+		if target_item_uuid:
+			data['target_item_uuid'] = target_item_uuid
+		if new_item_name:
+			data['new_item_name'] = new_item_name
+		return self.post_json(f'items/{source_item_uuid}/artefacts/batch-move', data)
+
 	def list_platforms(self) -> dict:
 		return self.get('platforms')
 

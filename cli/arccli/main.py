@@ -89,6 +89,18 @@ def main():
 	artefacts_move.add_argument('uuid', help='Artefact UUID')
 	artefacts_move.add_argument('--to', required=True, dest='target_item_uuid', help='Target item UUID')
 
+	# artefacts batch-move
+	artefacts_batch_move = artefacts_sub.add_parser(
+		'batch-move', help='Move multiple artefacts from one source item'
+	)
+	artefacts_batch_move.set_defaults(func='items:cmd_artefacts_batch_move')
+	artefacts_batch_move.add_argument('source_item_uuid', help='Source item UUID')
+	artefacts_batch_move.add_argument('uuids', nargs='+', help='Artefact UUID(s) to move')
+	destination = artefacts_batch_move.add_mutually_exclusive_group(required=True)
+	destination.add_argument('--to', dest='target_item_uuid', help='Existing target item UUID')
+	destination.add_argument('--new-subitem', help='Create this subitem under the source item')
+	artefacts_batch_move.add_argument('--yes', '-y', action='store_true', help='Skip confirmation')
+
 	# ---- upload ----
 	upload_parser = subparsers.add_parser('upload', help='Upload artefacts to an item')
 	upload_parser.set_defaults(func='upload:cmd_upload')
